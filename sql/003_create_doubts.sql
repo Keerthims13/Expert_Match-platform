@@ -1,0 +1,11 @@
+USE Expert_Match;
+
+CREATE TABLE IF NOT EXISTS doubts (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  requester_name VARCHAR(140) NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  description TEXT NOT NULL,
+  category VARCHAR(80) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'open',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
