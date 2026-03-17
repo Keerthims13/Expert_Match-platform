@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import expertRoutes from './routes/expertRoutes.js';
 import doubtRoutes from './routes/doubtRoutes.js';
+import sessionRoutes from './routes/sessionRoutes.js';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/experts', expertRoutes);
 app.use('/api/doubts', doubtRoutes);
+app.use('/api/sessions', sessionRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: `Route not found: ${req.originalUrl}` });

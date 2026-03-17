@@ -3,10 +3,12 @@ import ExpertProfilePage from '../pages/ExpertProfilePage.jsx';
 import ExpertsListPage from '../pages/ExpertsListPage.jsx';
 import ExpertDetailsPage from '../pages/ExpertDetailsPage.jsx';
 import DoubtBoardPage from '../pages/DoubtBoardPage.jsx';
+import SessionChatPage from '../pages/SessionChatPage.jsx';
 
 function App() {
   const [view, setView] = useState('create');
   const [selectedExpert, setSelectedExpert] = useState(null);
+  const [selectedSessionId, setSelectedSessionId] = useState(null);
 
   function renderView() {
     if (view === 'list') {
@@ -30,7 +32,18 @@ function App() {
     }
 
     if (view === 'doubts') {
-      return <DoubtBoardPage />;
+      return (
+        <DoubtBoardPage
+          onOpenSession={(session) => {
+            setSelectedSessionId(session.id);
+            setView('sessions');
+          }}
+        />
+      );
+    }
+
+    if (view === 'sessions') {
+      return <SessionChatPage initialSessionId={selectedSessionId} />;
     }
 
     return <ExpertProfilePage onExploreExperts={() => setView('list')} />;
@@ -48,6 +61,13 @@ function App() {
         </button>
         <button type="button" className={`nav-btn ${view === 'doubts' ? 'active' : ''}`} onClick={() => setView('doubts')}>
           Post Doubts
+        </button>
+        <button
+          type="button"
+          className={`nav-btn ${view === 'sessions' ? 'active' : ''}`}
+          onClick={() => setView('sessions')}
+        >
+          Sessions Chat
         </button>
       </aside>
       <section className="app-content">{renderView()}</section>

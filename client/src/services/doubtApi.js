@@ -33,3 +33,16 @@ export async function fetchDoubtMatches(doubtId) {
   const payload = await parseResponse(response, 'Failed to fetch expert matches');
   return payload.data;
 }
+
+export async function assignExpertToDoubt(doubtId, expertId) {
+  const response = await fetch(`${API_BASE_URL}/api/doubts/${doubtId}/assign`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expertId })
+  });
+
+  const payload = await parseResponse(response, 'Failed to assign expert');
+  return payload.data;
+}

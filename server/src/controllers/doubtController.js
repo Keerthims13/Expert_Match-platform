@@ -26,6 +26,18 @@ export const doubtController = {
     }
   },
 
+  async assignExpert(req, res, next) {
+    try {
+      const doubt = await doubtService.assignExpert(req.params.id, req.body.expertId);
+      res.json({
+        message: 'Expert assigned to doubt successfully',
+        data: doubt
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async createDoubt(req, res, next) {
     try {
       const doubt = await doubtService.createDoubt(req.body);

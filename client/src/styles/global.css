@@ -344,6 +344,16 @@ select {
   flex: 1;
 }
 
+.assigned-strip {
+  margin-top: 0.6rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.assigned-strip .success-box {
+  margin-top: 0;
+}
+
 .doubt-list {
   display: grid;
   gap: 0.8rem;
@@ -372,8 +382,127 @@ select {
   align-items: flex-start;
 }
 
+.match-actions {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: end;
+}
+
 .match-item p {
   margin: 0.2rem 0 0;
+}
+
+.session-layout {
+  display: grid;
+  grid-template-columns: 0.9fr 1.4fr;
+  gap: 1rem;
+}
+
+.session-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.session-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.3rem;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-item strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.session-meta-line {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.unread-pill {
+  background: #d91f3a;
+  color: #fff;
+  border-radius: 999px;
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.session-item.active {
+  border-color: #8fb1ff;
+  background: #edf4ff;
+}
+
+.session-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.session-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.typing-line {
+  margin: 0.2rem 0 0;
+  color: #2b5fb4;
+  font-size: 0.9rem;
+  min-height: 1.1rem;
+}
+
+.chat-box {
+  margin-top: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.8rem;
+  background: #fbfcff;
+  max-height: 340px;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.chat-bubble {
+  border-radius: 12px;
+  padding: 0.6rem;
+  border: 1px solid #dbe3f5;
+  background: #fff;
+}
+
+.chat-bubble.student {
+  background: #ebf2ff;
+}
+
+.chat-bubble.expert {
+  background: #edfff8;
+}
+
+.chat-bubble p {
+  margin: 0.25rem 0;
+}
+
+.chat-bubble span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.chat-form {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.55rem;
 }
 
 textarea {
@@ -399,7 +528,8 @@ textarea {
 
   .form-layout,
   .detail-layout,
-  .doubt-layout {
+  .doubt-layout,
+  .session-layout {
     grid-template-columns: 1fr;
     display: grid;
   }

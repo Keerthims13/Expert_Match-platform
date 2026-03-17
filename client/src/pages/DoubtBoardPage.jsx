@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createDoubt, fetchDoubtMatches, fetchDoubts } from '../services/doubtApi.js';
+import { assignExpertToDoubt, createDoubt, fetchDoubtMatches, fetchDoubts } from '../services/doubtApi.js';
+import { createSession } from '../services/sessionApi.js';
 
 const initialForm = {
   requesterName: '',
@@ -8,7 +9,7 @@ const initialForm = {
   category: 'Development'
 };
 
-function DoubtBoardPage() {
+function DoubtBoardPage({ onOpenSession }) {
   const [form, setForm] = useState(initialForm);
   const [doubts, setDoubts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -151,13 +152,58 @@ function DoubtBoardPage() {
                             <strong>{expert.fullName}</strong>
                             <p className="muted">{expert.specialties.slice(0, 3).join(', ') || 'No skills listed'}</p>
                           </div>
-                          <span className="mini-id">Score {expert.matchScore}</span>
+                          <div className="match-actions">
+                            <span className="mini-id">Score {expert.matchScore}</span>
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={async () => {
+                                try {
+                                  setError('');
+                                  await assignExpertToDoubt(doubt.id, expert.id);
+                                  setSuccess(`Assigned ${expert.fullName} to doubt #${doubt.id}.`);
+                                  await loadDoubts();
+                                } catch (assignError) {
+                                  setError(assignError.message);
+                                }
+                              }}
+                            >
+                              Assign Expert
+                            </button>
+                          </div>
                         </div>
                       ))
                     ) : (
                       <p className="muted">No matching experts found for this doubt.</p>
                     )}
                   </div>
+                </div>
+              ) : null}
+
+              {doubt.assignedExpert ? (
+                <div className="assigned-strip">
+                  <p className="success-box">
+                    Assigned to {doubt.assignedExpert.fullName} ({doubt.assignedExpert.title || 'Expert'})
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={async () => {
+                      try {
+                        const session = await createSession({ doubtId: doubt.id, expertId: doubt.assignedExpert.id });
+                        if (session?._meta?.created) {
+                          setSuccess(`Session #${session.id} started for doubt #${doubt.id}.`);
+                        } else {
+                          setSuccess(`Opened existing session #${session.id} for doubt #${doubt.id}.`);
+                        }
+                        if (onOpenSession) onOpenSession(session);
+                      } catch (sessionError) {
+                        setError(sessionError.message);
+                      }
+                    }}
+                  >
+                    Start Session
+                  </button>
                 </div>
               ) : null}
             </article>

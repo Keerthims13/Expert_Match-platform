@@ -134,6 +134,31 @@ export const doubtService = {
     return doubtRepository.findAll();
   },
 
+  async assignExpert(doubtId, expertId) {
+    const numericDoubtId = Number(doubtId);
+    const numericExpertId = Number(expertId);
+
+    if (!Number.isInteger(numericDoubtId) || numericDoubtId <= 0) {
+      throw new BadRequestError('doubtId must be a positive integer');
+    }
+
+    if (!Number.isInteger(numericExpertId) || numericExpertId <= 0) {
+      throw new BadRequestError('expertId must be a positive integer');
+    }
+
+    const expert = await expertRepository.findById(numericExpertId);
+    if (!expert) {
+      throw new NotFoundError('Expert not found');
+    }
+
+    const updated = await doubtRepository.assignExpert(numericDoubtId, numericExpertId);
+    if (!updated) {
+      throw new NotFoundError('Doubt not found');
+    }
+
+    return updated;
+  },
+
   async getMatchedExperts(doubtId) {
     const numericId = Number(doubtId);
 
