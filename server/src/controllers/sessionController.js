@@ -1,6 +1,21 @@
 import { sessionService } from '../services/sessionService.js';
 
 export const sessionController = {
+  async getUnreadCounts(req, res, next) {
+    try {
+      const data = await sessionService.getUnreadCounts({
+        senderRole: req.user.role,
+        senderName: req.user.fullName
+      });
+      res.json({
+        message: 'Unread counts fetched successfully',
+        data
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getSessions(_req, res, next) {
     try {
       const sessions = await sessionService.getSessions();
@@ -68,10 +83,30 @@ export const sessionController = {
 
   async createMessage(req, res, next) {
     try {
-      const message = await sessionService.createMessage(req.params.id, req.body);
+      const payload = {
+        ...req.body,
+        senderRole: req.user.role,
+        senderName: req.user.fullName
+      };
+      const message = await sessionService.createMessage(req.params.id, payload);
       res.status(201).json({
         message: 'Message sent successfully',
         data: message
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async markSessionRead(req, res, next) {
+    try {
+      const data = await sessionService.markSessionRead(req.params.id, {
+        senderRole: req.user.role,
+        senderName: req.user.fullName
+      });
+      res.json({
+        message: 'Session marked as read',
+        data
       });
     } catch (error) {
       next(error);

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  fetchUnreadCounts,
   fetchSessionMessages,
   fetchSessions,
+  markSessionRead,
   updateSessionStatus
 } from '../services/sessionApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
@@ -12,17 +14,37 @@ const initialDraft = {
   message: ''
 };
 
-function SessionChatPage({ initialSessionId }) {
+function SessionChatPage({ initialSessionId, currentUser }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState(initialSessionId || null);
   const [messages, setMessages] = useState([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [error, setError] = useState('');
-  const [draft, setDraft] = useState(initialDraft);
+  const [draft, setDraft] = useState({
+    ...initialDraft,
+    senderRole: currentUser?.role || initialDraft.senderRole,
+    senderName: currentUser?.fullName || initialDraft.senderName
+  });
   const [typingBySession, setTypingBySession] = useState({});
   const [presenceBySession, setPresenceBySession] = useState({});
   const [unreadBySession, setUnreadBySession] = useState({});
+
+  function isCurrentParticipant(senderRole, senderName) {
+    return (
+      String(senderRole || '').trim().toLowerCase() === String(draft.senderRole || '').trim().toLowerCase() &&
+      String(senderName || '').trim() === String(draft.senderName || '').trim()
+    );
+  }
+
+  async function loadUnreadCounts() {
+    try {
+      const data = await fetchUnreadCounts();
+      setUnreadBySession(data);
+    } catch (loadError) {
+      setError(loadError.message);
+    }
+  }
 
   useEffect(() => {
     const socket = getChatSocket();
@@ -35,7 +57,19 @@ function SessionChatPage({ initialSessionId }) {
           }
           return [...prev, message];
         });
+
+        if (!isCurrentParticipant(message.senderRole, message.senderName)) {
+          socket.emit('mark_read', {
+            sessionId: selectedSessionId,
+            senderRole: draft.senderRole,
+            senderName: draft.senderName
+          });
+        }
       } else {
+        if (isCurrentParticipant(message.senderRole, message.senderName)) {
+          return;
+        }
+
         setUnreadBySession((prev) => ({
           ...prev,
           [message.sessionId]: (prev[message.sessionId] || 0) + 1
@@ -71,6 +105,25 @@ function SessionChatPage({ initialSessionId }) {
       }));
     }
 
+    function onMessageStatusUpdated(payload) {
+      const sessionId = Number(payload?.sessionId);
+      if (!sessionId || sessionId !== Number(selectedSessionId)) return;
+
+      const messageIds = Array.isArray(payload?.messageIds) ? payload.messageIds.map(Number) : [];
+      if (!messageIds.length) return;
+
+      setMessages((prev) =>
+        prev.map((item) => {
+          if (!messageIds.includes(Number(item.id))) return item;
+
+          return {
+            ...item,
+            messageStatus: payload.status || item.messageStatus
+          };
+        })
+      );
+    }
+
     function onConnectError(connectionError) {
       setError(connectionError.message || 'Realtime connection failed');
     }
@@ -78,15 +131,17 @@ function SessionChatPage({ initialSessionId }) {
     socket.on('new_message', onNewMessage);
     socket.on('typing', onTyping);
     socket.on('room_presence', onRoomPresence);
+    socket.on('message_status_updated', onMessageStatusUpdated);
     socket.on('connect_error', onConnectError);
 
     return () => {
       socket.off('new_message', onNewMessage);
       socket.off('typing', onTyping);
       socket.off('room_presence', onRoomPresence);
+      socket.off('message_status_updated', onMessageStatusUpdated);
       socket.off('connect_error', onConnectError);
     };
-  }, [selectedSessionId]);
+  }, [selectedSessionId, draft.senderName, draft.senderRole]);
 
   async function loadSessions() {
     setLoadingSessions(true);
@@ -106,7 +161,20 @@ function SessionChatPage({ initialSessionId }) {
 
   useEffect(() => {
     loadSessions();
+    loadUnreadCounts();
   }, []);
+
+  useEffect(() => {
+    loadUnreadCounts();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    setDraft((prev) => ({
+      ...prev,
+      senderRole: currentUser?.role || prev.senderRole,
+      senderName: currentUser?.fullName || prev.senderName
+    }));
+  }, [currentUser]);
 
   useEffect(() => {
     if (!initialSessionId) return;
@@ -124,7 +192,14 @@ function SessionChatPage({ initialSessionId }) {
 
     fetchSessionMessages(selectedSessionId)
       .then((data) => {
-        if (active) setMessages(data);
+        if (active) {
+          setMessages(data);
+          markSessionRead(selectedSessionId)
+            .then(() => {
+              setUnreadBySession((prev) => ({ ...prev, [selectedSessionId]: 0 }));
+            })
+            .catch(() => {});
+        }
       })
       .catch((loadError) => {
         if (active) setError(loadError.message);
@@ -144,13 +219,17 @@ function SessionChatPage({ initialSessionId }) {
     }
 
     const socket = getChatSocket();
-    socket.emit('join_session', { sessionId: selectedSessionId, senderName: draft.senderName });
+    socket.emit('join_session', {
+      sessionId: selectedSessionId,
+      senderName: draft.senderName,
+      senderRole: draft.senderRole
+    });
     setUnreadBySession((prev) => ({ ...prev, [selectedSessionId]: 0 }));
 
     return () => {
       socket.emit('leave_session', { sessionId: selectedSessionId });
     };
-  }, [selectedSessionId, draft.senderName]);
+  }, [selectedSessionId, draft.senderName, draft.senderRole]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) || null,
@@ -269,26 +348,18 @@ function SessionChatPage({ initialSessionId }) {
                 <div key={msg.id} className={`chat-bubble ${msg.senderRole}`}>
                   <strong>{msg.senderName}</strong>
                   <p>{msg.message}</p>
-                  <span>{msg.createdAtLabel}</span>
+                  <span>
+                    {msg.createdAtLabel}
+                    {isCurrentParticipant(msg.senderRole, msg.senderName)
+                      ? ` • ${String(msg.messageStatus || 'sent').toUpperCase()}`
+                      : ''}
+                  </span>
                 </div>
               ))}
             </div>
 
             <form onSubmit={onSend} className="chat-form">
-              <input
-                value={draft.senderName}
-                onChange={(event) => setDraft((prev) => ({ ...prev, senderName: event.target.value }))}
-                placeholder="Sender name"
-                required
-              />
-              <select
-                value={draft.senderRole}
-                onChange={(event) => setDraft((prev) => ({ ...prev, senderRole: event.target.value }))}
-              >
-                <option value="student">Student</option>
-                <option value="expert">Expert</option>
-                <option value="system">System</option>
-              </select>
+              <p className="muted">You are sending as: {draft.senderName} ({draft.senderRole})</p>
               <textarea
                 rows="3"
                 value={draft.message}

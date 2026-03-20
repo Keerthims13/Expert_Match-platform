@@ -9,7 +9,7 @@ const initialForm = {
   category: 'Development'
 };
 
-function DoubtBoardPage({ onOpenSession }) {
+function DoubtBoardPage({ onOpenSession, currentUser }) {
   const [form, setForm] = useState(initialForm);
   const [doubts, setDoubts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +33,15 @@ function DoubtBoardPage({ onOpenSession }) {
     loadDoubts();
   }, []);
 
+  useEffect(() => {
+    if (currentUser?.fullName) {
+      setForm((prev) => ({
+        ...prev,
+        requesterName: prev.requesterName || currentUser.fullName
+      }));
+    }
+  }, [currentUser]);
+
   function onChange(event) {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -47,7 +56,7 @@ function DoubtBoardPage({ onOpenSession }) {
     try {
       await createDoubt(form);
       setSuccess('Doubt posted successfully.');
-      setForm(initialForm);
+      setForm((prev) => ({ ...initialForm, requesterName: prev.requesterName || currentUser?.fullName || '' }));
       await loadDoubts();
     } catch (submitError) {
       setError(submitError.message);
@@ -64,10 +73,7 @@ function DoubtBoardPage({ onOpenSession }) {
         <p className="subtitle">Backend-first next feature: create and list doubt posts.</p>
 
         <form className="profile-form" onSubmit={onSubmit}>
-          <label>
-            Your Name
-            <input name="requesterName" value={form.requesterName} onChange={onChange} required />
-          </label>
+          <p className="muted">Posting as: {currentUser?.fullName || form.requesterName || 'User'}</p>
           <label>
             Doubt Title
             <input name="title" value={form.title} onChange={onChange} required />

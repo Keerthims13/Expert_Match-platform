@@ -505,6 +505,11 @@ select {
   gap: 0.55rem;
 }
 
+.auth-shell {
+  max-width: 520px;
+  margin: 3rem auto;
+}
+
 textarea {
   border: 1px solid #c9d3ea;
   border-radius: 12px;

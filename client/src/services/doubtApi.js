@@ -1,48 +1,41 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-
-async function parseResponse(response, fallbackMessage) {
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || fallbackMessage);
-  }
-
-  return response.json();
-}
+import { apiFetch } from './httpClient.js';
 
 export async function fetchDoubts() {
-  const response = await fetch(`${API_BASE_URL}/api/doubts`);
-  const payload = await parseResponse(response, 'Failed to fetch doubts');
+  const payload = await apiFetch('/api/doubts', {}, 'Failed to fetch doubts');
   return payload.data;
 }
 
 export async function createDoubt(data) {
-  const response = await fetch(`${API_BASE_URL}/api/doubts`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
+  const payload = await apiFetch(
+    '/api/doubts',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
     },
-    body: JSON.stringify(data)
-  });
-
-  const payload = await parseResponse(response, 'Failed to create doubt');
+    'Failed to create doubt'
+  );
   return payload.data;
 }
 
 export async function fetchDoubtMatches(doubtId) {
-  const response = await fetch(`${API_BASE_URL}/api/doubts/${doubtId}/matches`);
-  const payload = await parseResponse(response, 'Failed to fetch expert matches');
+  const payload = await apiFetch(`/api/doubts/${doubtId}/matches`, {}, 'Failed to fetch expert matches');
   return payload.data;
 }
 
 export async function assignExpertToDoubt(doubtId, expertId) {
-  const response = await fetch(`${API_BASE_URL}/api/doubts/${doubtId}/assign`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json'
+  const payload = await apiFetch(
+    `/api/doubts/${doubtId}/assign`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expertId })
     },
-    body: JSON.stringify({ expertId })
-  });
-
-  const payload = await parseResponse(response, 'Failed to assign expert');
+    'Failed to assign expert'
+  );
   return payload.data;
 }

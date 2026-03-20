@@ -40,7 +40,11 @@ export const doubtController = {
 
   async createDoubt(req, res, next) {
     try {
-      const doubt = await doubtService.createDoubt(req.body);
+      const payload = {
+        ...req.body,
+        requesterName: req.body.requesterName || req.user?.fullName
+      };
+      const doubt = await doubtService.createDoubt(payload);
       res.status(201).json({
         message: 'Doubt created successfully',
         data: doubt

@@ -22,15 +22,22 @@ function emitPresence(io, sessionId) {
 }
 
 export function initChatSocket(httpServer) {
+  const allowedOrigins = [
+    process.env.CLIENT_URL,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175'
+  ].filter(Boolean);
+
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:5173',
+      origin: allowedOrigins,
       methods: ['GET', 'POST', 'PATCH']
     }
   });
 
   io.on('connection', (socket) => {
-    socket.on('join_session', ({ sessionId, senderName }, ack) => {
+    socket.on('join_session', async ({ sessionId, senderName, senderRole }, ack) => {
       const numericSessionId = toPositiveInt(sessionId);
 
       if (!numericSessionId) {
@@ -46,6 +53,37 @@ export function initChatSocket(httpServer) {
       socket.join(toRoom(numericSessionId));
       socket.data.joinedSessionId = numericSessionId;
       socket.data.senderName = String(senderName || 'Anonymous').trim() || 'Anonymous';
+      socket.data.senderRole = String(senderRole || 'student').trim().toLowerCase() || 'student';
+
+      try {
+        const readResult = await sessionService.markSessionRead(numericSessionId, {
+          senderRole: socket.data.senderRole,
+          senderName: socket.data.senderName
+        });
+
+        if (readResult.seenMessageIds?.length) {
+          io.to(toRoom(numericSessionId)).emit('message_status_updated', {
+            sessionId: numericSessionId,
+            messageIds: readResult.seenMessageIds,
+            status: 'seen'
+          });
+        }
+
+        const roomSockets = io.sockets.adapter.rooms.get(toRoom(numericSessionId));
+        const onlineCount = roomSockets ? roomSockets.size : 0;
+        if (onlineCount > 1) {
+          const forcedSeen = await sessionService.markAllPendingMessagesSeen(numericSessionId);
+          if (forcedSeen.seenMessageIds?.length) {
+            io.to(toRoom(numericSessionId)).emit('message_status_updated', {
+              sessionId: numericSessionId,
+              messageIds: forcedSeen.seenMessageIds,
+              status: 'seen'
+            });
+          }
+        }
+      } catch (_error) {
+        // Keep socket join resilient even if read marker fails.
+      }
 
       emitPresence(io, numericSessionId);
       if (ack) ack({ ok: true });
@@ -85,13 +123,53 @@ export function initChatSocket(httpServer) {
         }
 
         const message = await sessionService.createMessage(numericSessionId, payload);
-        io.to(toRoom(numericSessionId)).emit('new_message', message);
+        const room = toRoom(numericSessionId);
+        io.to(room).emit('new_message', message);
+
+        const roomSockets = io.sockets.adapter.rooms.get(room);
+        const onlineCount = roomSockets ? roomSockets.size : 0;
+        if (onlineCount > 1) {
+          const delivered = await sessionService.markMessageDelivered(message.id);
+          if (delivered) {
+            io.to(room).emit('message_status_updated', {
+              sessionId: numericSessionId,
+              messageIds: [delivered.id],
+              status: 'delivered'
+            });
+          }
+        }
 
         if (ack) ack({ ok: true, data: message });
       } catch (error) {
         if (ack) {
           ack({ ok: false, message: error.message || 'Failed to send message' });
         }
+      }
+    });
+
+    socket.on('mark_read', async ({ sessionId, senderRole, senderName }, ack) => {
+      try {
+        const numericSessionId = toPositiveInt(sessionId);
+        if (!numericSessionId) {
+          throw new Error('sessionId must be a positive integer');
+        }
+
+        const readResult = await sessionService.markSessionRead(numericSessionId, {
+          senderRole,
+          senderName
+        });
+
+        if (readResult.seenMessageIds?.length) {
+          io.to(toRoom(numericSessionId)).emit('message_status_updated', {
+            sessionId: numericSessionId,
+            messageIds: readResult.seenMessageIds,
+            status: 'seen'
+          });
+        }
+
+        if (ack) ack({ ok: true, data: readResult });
+      } catch (error) {
+        if (ack) ack({ ok: false, message: error.message || 'Failed to mark read' });
       }
     });
 

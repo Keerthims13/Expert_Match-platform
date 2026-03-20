@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { doubtController } from '../controllers/doubtController.js';
+import { requireAuth } from '../middlewares/authMiddleware.js';
 
 const router = Router();
+
+router.use(requireAuth);
 
 router.get('/', doubtController.getDoubts);
 router.get('/:id/matches', doubtController.getMatchedExperts);

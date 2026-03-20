@@ -23,6 +23,21 @@ function toPositiveInt(value, label) {
   return numeric;
 }
 
+function normalizeParticipant(input) {
+  const senderRole = String(input?.senderRole || '').trim().toLowerCase();
+  const senderName = String(input?.senderName || '').trim();
+
+  if (!['student', 'expert', 'system'].includes(senderRole)) {
+    throw new BadRequestError('senderRole must be student, expert, or system');
+  }
+
+  if (!senderName) {
+    throw new BadRequestError('senderName is required');
+  }
+
+  return { senderRole, senderName };
+}
+
 export const sessionService = {
   async getSessions() {
     return sessionRepository.findAllSessions();
@@ -98,27 +113,72 @@ export const sessionService = {
       throw new NotFoundError('Session not found');
     }
 
-    const senderRole = String(input.senderRole || '').trim().toLowerCase();
-    const senderName = String(input.senderName || '').trim();
+    const { senderRole, senderName } = normalizeParticipant(input);
     const message = String(input.message || '').trim();
-
-    if (!['student', 'expert', 'system'].includes(senderRole)) {
-      throw new BadRequestError('senderRole must be student, expert, or system');
-    }
-
-    if (!senderName) {
-      throw new BadRequestError('senderName is required');
-    }
 
     if (!message) {
       throw new BadRequestError('message is required');
     }
 
-    return sessionRepository.createMessage({
+    const created = await sessionRepository.createMessage({
       sessionId,
       senderRole,
       senderName,
       message
     });
+
+    // A sender has read up to their own latest message.
+    await sessionRepository.upsertParticipant(sessionId, senderRole, senderName);
+    return created;
+  },
+
+  async markMessageDelivered(messageId) {
+    const numericMessageId = toPositiveInt(messageId, 'messageId');
+    return sessionRepository.markMessageDelivered(numericMessageId);
+  },
+
+  async getUnreadCounts(input) {
+    const { senderRole, senderName } = normalizeParticipant(input);
+    const counts = await sessionRepository.findUnreadCountsByParticipant(senderRole, senderName);
+
+    return counts.reduce((acc, item) => {
+      acc[item.sessionId] = item.unreadCount;
+      return acc;
+    }, {});
+  },
+
+  async markSessionRead(id, input) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    const session = await sessionRepository.findSessionById(sessionId);
+    if (!session) {
+      throw new NotFoundError('Session not found');
+    }
+
+    const { senderRole, senderName } = normalizeParticipant(input);
+    await sessionRepository.markSessionReadForParticipant(sessionId, senderRole, senderName);
+    const seenMessageIds = await sessionRepository.markMessagesSeenForParticipant(sessionId, senderRole, senderName);
+
+    return {
+      sessionId,
+      senderRole,
+      senderName,
+      seenMessageIds,
+      markedAt: new Date().toISOString()
+    };
+  },
+
+  async markAllPendingMessagesSeen(id) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    const session = await sessionRepository.findSessionById(sessionId);
+    if (!session) {
+      throw new NotFoundError('Session not found');
+    }
+
+    const seenMessageIds = await sessionRepository.markAllPendingMessagesSeenInSession(sessionId);
+    return {
+      sessionId,
+      seenMessageIds,
+      markedAt: new Date().toISOString()
+    };
   }
 };
