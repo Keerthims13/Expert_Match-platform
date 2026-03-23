@@ -10,6 +10,10 @@ function toPositiveInt(value) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
+function toIdentityKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+}
+
 function emitPresence(io, sessionId) {
   const room = toRoom(sessionId);
   const roomSockets = io.sockets.adapter.rooms.get(room);
@@ -37,6 +41,23 @@ export function initChatSocket(httpServer) {
   });
 
   io.on('connection', (socket) => {
+    socket.on('register_user', ({ userId, fullName, role }, ack) => {
+      const numericUserId = toPositiveInt(userId);
+      if (!numericUserId) {
+        if (ack) ack({ ok: false, message: 'userId must be a positive integer' });
+        return;
+      }
+
+      socket.join(`user:${numericUserId}`);
+      const roleKey = String(role || '').trim().toLowerCase();
+      const nameKey = toIdentityKey(fullName);
+      if (roleKey && nameKey) {
+        socket.join(`identity:${roleKey}:${nameKey}`);
+      }
+      socket.data.userId = numericUserId;
+      if (ack) ack({ ok: true });
+    });
+
     socket.on('join_session', async ({ sessionId, senderName, senderRole }, ack) => {
       const numericSessionId = toPositiveInt(sessionId);
 
@@ -72,6 +93,13 @@ export function initChatSocket(httpServer) {
         const roomSockets = io.sockets.adapter.rooms.get(toRoom(numericSessionId));
         const onlineCount = roomSockets ? roomSockets.size : 0;
         if (onlineCount > 1) {
+          const updatedSession = await sessionService.scheduleSessionStart(numericSessionId);
+          io.to(toRoom(numericSessionId)).emit('session_status_updated', {
+            sessionId: numericSessionId,
+            session: updatedSession,
+            actor: null
+          });
+
           const forcedSeen = await sessionService.markAllPendingMessagesSeen(numericSessionId);
           if (forcedSeen.seenMessageIds?.length) {
             io.to(toRoom(numericSessionId)).emit('message_status_updated', {

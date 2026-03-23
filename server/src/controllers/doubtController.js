@@ -1,9 +1,9 @@
 import { doubtService } from '../services/doubtService.js';
 
 export const doubtController = {
-  async getDoubts(_req, res, next) {
+  async getDoubts(req, res, next) {
     try {
-      const doubts = await doubtService.getDoubts();
+      const doubts = await doubtService.getDoubts(req.user);
       res.json({
         message: 'Doubts fetched successfully',
         count: doubts.length,
@@ -28,7 +28,7 @@ export const doubtController = {
 
   async assignExpert(req, res, next) {
     try {
-      const doubt = await doubtService.assignExpert(req.params.id, req.body.expertId);
+      const doubt = await doubtService.assignExpert(req.params.id, req.body.expertId, req.user);
       res.json({
         message: 'Expert assigned to doubt successfully',
         data: doubt
@@ -42,7 +42,8 @@ export const doubtController = {
     try {
       const payload = {
         ...req.body,
-        requesterName: req.body.requesterName || req.user?.fullName
+        requesterName: req.user?.fullName,
+        requesterUserId: req.user?.id
       };
       const doubt = await doubtService.createDoubt(payload);
       res.status(201).json({
@@ -56,7 +57,7 @@ export const doubtController = {
 
   async deleteDoubt(req, res, next) {
     try {
-      const result = await doubtService.deleteDoubt(req.params.id);
+      const result = await doubtService.deleteDoubt(req.params.id, req.user);
       res.json({
         message: 'Doubt deleted successfully',
         data: result

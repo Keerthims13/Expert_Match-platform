@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { createExpertProfile } from '../services/expertApi.js';
+import { useEffect, useState } from 'react';
+import { createExpertProfile, fetchMyExpertProfile, updateMyExpertAvailability } from '../services/expertApi.js';
 
 const initialForm = {
   fullName: '',
@@ -8,12 +8,50 @@ const initialForm = {
   availabilityStatus: 'available'
 };
 
-function ExpertProfilePage({ onExploreExperts }) {
+function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) {
   const [form, setForm] = useState(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [createdProfile, setCreatedProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  useEffect(() => {
+    if (currentUser?.fullName) {
+      setForm((prev) => ({
+        ...prev,
+        fullName: prev.fullName || currentUser.fullName
+      }));
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'expert') {
+      setLoadingProfile(false);
+      return;
+    }
+
+    let active = true;
+
+    async function loadMyProfile() {
+      try {
+        const profile = await fetchMyExpertProfile();
+        if (!active) return;
+        setCreatedProfile(profile);
+      } catch (_error) {
+        if (!active) return;
+      } finally {
+        if (active) setLoadingProfile(false);
+      }
+    }
+
+    loadMyProfile();
+
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.role]);
 
   function onFieldChange(event) {
     const { name, value } = event.target;
@@ -37,7 +75,8 @@ function ExpertProfilePage({ onExploreExperts }) {
       const created = await createExpertProfile(payload);
       setCreatedProfile(created);
       setSuccess('Expert profile created and saved to database successfully.');
-      setForm(initialForm);
+      setForm((prev) => ({ ...initialForm, fullName: prev.fullName || currentUser?.fullName || '' }));
+      if (onProfileCreated) onProfileCreated(created);
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -48,13 +87,28 @@ function ExpertProfilePage({ onExploreExperts }) {
   return (
     <main className="screen form-layout">
       <section className="form-card">
-        <p className="label">Create Expert Profile</p>
-        <h1>Fill skills, price, and availability</h1>
+        <p className="label">My Profile</p>
+        <h1>{currentUser?.role === 'expert' ? 'Expert profile settings' : 'Account overview'}</h1>
         <p className="subtitle">
-          This form calls the backend API and stores profile data in MySQL for the expert directory.
+          {currentUser?.role === 'expert'
+            ? 'Create your expert profile once, and change availability anytime.'
+            : 'You are logged in as student. You can post doubts and assign experts from the directory.'}
         </p>
 
-        <form onSubmit={onSubmit} className="profile-form">
+        {currentUser?.role !== 'expert' ? (
+          <div className="profile-form">
+            <p className="muted">Name: {currentUser?.fullName}</p>
+            <p className="muted">Email: {currentUser?.email}</p>
+            <p className="muted">Role: {currentUser?.role}</p>
+            <p className="muted">This data is loaded from your registered account.</p>
+            <p className="muted">Use Post Doubts to create doubts and All Developers to assign experts.</p>
+          </div>
+        ) : null}
+
+        {currentUser?.role === 'expert' && loadingProfile ? <p className="muted">Loading profile...</p> : null}
+
+        {currentUser?.role === 'expert' && !createdProfile ? (
+          <form onSubmit={onSubmit} className="profile-form">
           <label>
             Full Name
             <input
@@ -105,7 +159,38 @@ function ExpertProfilePage({ onExploreExperts }) {
           <button type="submit" className="primary-btn" disabled={submitting}>
             {submitting ? 'Saving...' : 'Create Profile'}
           </button>
-        </form>
+          </form>
+        ) : null}
+
+        {currentUser?.role === 'expert' && createdProfile ? (
+          <div className="profile-form">
+            <p className="muted">Profile already created. You can update your availability anytime.</p>
+            <label>
+              Availability
+              <select
+                value={createdProfile.availabilityStatus}
+                onChange={async (event) => {
+                  try {
+                    setStatusSaving(true);
+                    setError('');
+                    const updated = await updateMyExpertAvailability(event.target.value);
+                    setCreatedProfile(updated);
+                    setSuccess('Availability updated successfully.');
+                  } catch (statusError) {
+                    setError(statusError.message);
+                  } finally {
+                    setStatusSaving(false);
+                  }
+                }}
+                disabled={statusSaving}
+              >
+                <option value="available">Available</option>
+                <option value="busy">Busy</option>
+                <option value="offline">Offline</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
 
         {error ? <p className="error-box">{error}</p> : null}
         {success ? <p className="success-box">{success}</p> : null}
@@ -117,7 +202,9 @@ function ExpertProfilePage({ onExploreExperts }) {
 
       <section className="preview-card">
         <p className="label">Saved Profile Preview</p>
-        {!createdProfile ? (
+        {currentUser?.role !== 'expert' ? (
+          <p className="muted">Student account does not require expert profile.</p>
+        ) : !createdProfile ? (
           <p className="muted">No profile created in this session yet.</p>
         ) : (
           <>

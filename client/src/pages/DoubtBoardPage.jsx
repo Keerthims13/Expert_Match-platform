@@ -54,7 +54,10 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
     setSuccess('');
 
     try {
-      await createDoubt(form);
+      await createDoubt({
+        ...form,
+        requesterName: currentUser?.fullName || form.requesterName
+      });
       setSuccess('Doubt posted successfully.');
       setForm((prev) => ({ ...initialForm, requesterName: prev.requesterName || currentUser?.fullName || '' }));
       await loadDoubts();
@@ -70,7 +73,7 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
       <div>
         <p className="label">Next Feature</p>
         <h1>Post a new doubt</h1>
-        <p className="subtitle">Backend-first next feature: create and list doubt posts.</p>
+        <p className="subtitle">Students and experts can post doubts. Students can assign experts and initiate chat requests.</p>
 
         <form className="profile-form" onSubmit={onSubmit}>
           <p className="muted">Posting as: {currentUser?.fullName || form.requesterName || 'User'}</p>
@@ -157,25 +160,31 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                           <div>
                             <strong>{expert.fullName}</strong>
                             <p className="muted">{expert.specialties.slice(0, 3).join(', ') || 'No skills listed'}</p>
+                            <p className="muted">Status: {expert.availabilityStatus || 'offline'}</p>
                           </div>
                           <div className="match-actions">
                             <span className="mini-id">Score {expert.matchScore}</span>
-                            <button
-                              type="button"
-                              className="secondary-btn"
-                              onClick={async () => {
-                                try {
-                                  setError('');
-                                  await assignExpertToDoubt(doubt.id, expert.id);
-                                  setSuccess(`Assigned ${expert.fullName} to doubt #${doubt.id}.`);
-                                  await loadDoubts();
-                                } catch (assignError) {
-                                  setError(assignError.message);
-                                }
-                              }}
-                            >
-                              Assign Expert
-                            </button>
+                            {currentUser?.role === 'student' ? (
+                              <button
+                                type="button"
+                                className="secondary-btn"
+                                disabled={String(expert.availabilityStatus || '').toLowerCase() !== 'available'}
+                                onClick={async () => {
+                                  try {
+                                    setError('');
+                                    await assignExpertToDoubt(doubt.id, expert.id);
+                                    setSuccess(`Assigned ${expert.fullName} to doubt #${doubt.id}.`);
+                                    await loadDoubts();
+                                  } catch (assignError) {
+                                    setError(assignError.message);
+                                  }
+                                }}
+                              >
+                                {String(expert.availabilityStatus || '').toLowerCase() === 'available'
+                                  ? 'Assign Expert'
+                                  : 'Unavailable'}
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       ))
@@ -186,7 +195,7 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                 </div>
               ) : null}
 
-              {doubt.assignedExpert ? (
+              {doubt.assignedExpert && currentUser?.role === 'student' ? (
                 <div className="assigned-strip">
                   <p className="success-box">
                     Assigned to {doubt.assignedExpert.fullName} ({doubt.assignedExpert.title || 'Expert'})
@@ -197,8 +206,8 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                     onClick={async () => {
                       try {
                         const session = await createSession({ doubtId: doubt.id, expertId: doubt.assignedExpert.id });
-                        if (session?._meta?.created) {
-                          setSuccess(`Session #${session.id} started for doubt #${doubt.id}.`);
+                        if (session?._meta?.created || String(session?.status || '').toLowerCase() === 'requested') {
+                          setSuccess(`Chat request sent to ${doubt.assignedExpert.fullName}. Waiting for expert confirmation.`);
                         } else {
                           setSuccess(`Opened existing session #${session.id} for doubt #${doubt.id}.`);
                         }
@@ -208,7 +217,7 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                       }
                     }}
                   >
-                    Start Session
+                    Start Chat Request
                   </button>
                 </div>
               ) : null}

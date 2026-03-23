@@ -4,6 +4,7 @@ import {
   fetchSessionMessages,
   fetchSessions,
   markSessionRead,
+  respondToSessionRequest,
   updateSessionStatus
 } from '../services/sessionApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
@@ -29,12 +30,26 @@ function SessionChatPage({ initialSessionId, currentUser }) {
   const [typingBySession, setTypingBySession] = useState({});
   const [presenceBySession, setPresenceBySession] = useState({});
   const [unreadBySession, setUnreadBySession] = useState({});
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.id === selectedSessionId) || null,
+    [sessions, selectedSessionId]
+  );
+  const chatIsActive = String(selectedSession?.status || '').toLowerCase() === 'active';
 
   function isCurrentParticipant(senderRole, senderName) {
     return (
       String(senderRole || '').trim().toLowerCase() === String(draft.senderRole || '').trim().toLowerCase() &&
       String(senderName || '').trim() === String(draft.senderName || '').trim()
     );
+  }
+
+  function formatSeconds(totalSeconds) {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   }
 
   async function loadUnreadCounts() {
@@ -128,10 +143,27 @@ function SessionChatPage({ initialSessionId, currentUser }) {
       setError(connectionError.message || 'Realtime connection failed');
     }
 
+    function onSessionLifecycle(payload) {
+      const incoming = payload?.session;
+      if (!incoming?.id) return;
+      setSessions((prev) => {
+        const index = prev.findIndex((item) => Number(item.id) === Number(incoming.id));
+        if (index === -1) {
+          return [incoming, ...prev];
+        }
+        const clone = [...prev];
+        clone[index] = incoming;
+        return clone;
+      });
+    }
+
     socket.on('new_message', onNewMessage);
     socket.on('typing', onTyping);
     socket.on('room_presence', onRoomPresence);
     socket.on('message_status_updated', onMessageStatusUpdated);
+    socket.on('session_request_created', onSessionLifecycle);
+    socket.on('session_request_responded', onSessionLifecycle);
+    socket.on('session_status_updated', onSessionLifecycle);
     socket.on('connect_error', onConnectError);
 
     return () => {
@@ -139,23 +171,28 @@ function SessionChatPage({ initialSessionId, currentUser }) {
       socket.off('typing', onTyping);
       socket.off('room_presence', onRoomPresence);
       socket.off('message_status_updated', onMessageStatusUpdated);
+      socket.off('session_request_created', onSessionLifecycle);
+      socket.off('session_request_responded', onSessionLifecycle);
+      socket.off('session_status_updated', onSessionLifecycle);
       socket.off('connect_error', onConnectError);
     };
   }, [selectedSessionId, draft.senderName, draft.senderRole]);
 
-  async function loadSessions() {
-    setLoadingSessions(true);
+  async function loadSessions(showLoading = true) {
+    if (showLoading) setLoadingSessions(true);
     try {
       const data = await fetchSessions();
       setSessions(data);
 
       if (!selectedSessionId && data.length) {
         setSelectedSessionId(initialSessionId || data[0].id);
+      } else if (selectedSessionId && !data.some((item) => Number(item.id) === Number(selectedSessionId))) {
+        setSelectedSessionId(data.length ? data[0].id : null);
       }
     } catch (loadError) {
       setError(loadError.message);
     } finally {
-      setLoadingSessions(false);
+      if (showLoading) setLoadingSessions(false);
     }
   }
 
@@ -167,6 +204,37 @@ function SessionChatPage({ initialSessionId, currentUser }) {
   useEffect(() => {
     loadUnreadCounts();
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const socket = getChatSocket();
+    socket.emit('register_user', {
+      userId: currentUser.id,
+      fullName: currentUser.fullName,
+      role: currentUser.role
+    });
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadSessions(false);
+      loadUnreadCounts();
+    }, 10000);
+
+    function onFocus() {
+      loadSessions(false);
+      loadUnreadCounts();
+    }
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [selectedSessionId]);
 
   useEffect(() => {
     setDraft((prev) => ({
@@ -231,14 +299,25 @@ function SessionChatPage({ initialSessionId, currentUser }) {
     };
   }, [selectedSessionId, draft.senderName, draft.senderRole]);
 
-  const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId) || null,
-    [sessions, selectedSessionId]
-  );
+  useEffect(() => {
+    if (!selectedSession?.startedAt) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const startTime = new Date(selectedSession.startedAt).getTime();
+      const now = Date.now();
+      const elapsed = Math.floor((now - startTime) / 1000);
+      setElapsedSeconds(elapsed < 0 ? 0 : elapsed);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [selectedSession?.startedAt, selectedSession?.id]);
 
   async function onSend(event) {
     event.preventDefault();
-    if (!selectedSessionId) return;
+    if (!selectedSessionId || !chatIsActive) return;
 
     try {
       const socket = getChatSocket();
@@ -271,6 +350,18 @@ function SessionChatPage({ initialSessionId, currentUser }) {
       setError('');
     } catch (sendError) {
       setError(sendError.message);
+    }
+  }
+
+  async function onRespondToRequest(decision) {
+    if (!selectedSessionId) return;
+
+    try {
+      const updated = await respondToSessionRequest(selectedSessionId, decision);
+      setSessions((prev) => prev.map((session) => (session.id === updated.id ? updated : session)));
+      setError('');
+    } catch (respondError) {
+      setError(respondError.message);
     }
   }
 
@@ -311,6 +402,9 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                 <span className="mini-id">{session.status}</span>
                 <span className="mini-id">{presenceBySession[session.id] || 0} online</span>
               </div>
+              {currentUser?.role === 'expert' && session.status === 'requested' ? (
+                <p className="typing-line">New chat request awaiting your response</p>
+              ) : null}
             </button>
           ))}
         </div>
@@ -326,6 +420,16 @@ function SessionChatPage({ initialSessionId, currentUser }) {
               <div>
                 <h2>{selectedSession.doubt.title}</h2>
                 <p className="muted">with {selectedSession.expert.fullName}</p>
+                <p className="muted">Status: {String(selectedSession.status || '').toUpperCase()}</p>
+                {selectedSession.status === 'requested' && currentUser?.role === 'expert' ? (
+                  <p className="muted">The student requested a chat. Please review and respond.</p>
+                ) : null}
+                {selectedSession.status === 'declined' ? (
+                  <p className="error-box session-inline-note">
+                    {selectedSession.declineReason || 'This session request was declined because the expert is currently unavailable.'}
+                  </p>
+                ) : null}
+                <p className="timer-display">⏱️ Elapsed: {formatSeconds(elapsedSeconds)}</p>
                 <p className="typing-line">
                   {typingBySession[selectedSession.id]
                     ? `${typingBySession[selectedSession.id]} is typing...`
@@ -333,12 +437,27 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                 </p>
               </div>
               <div className="session-actions">
-                <button type="button" className="secondary-btn" onClick={() => onStatusChange('active')}>
-                  Mark Active
-                </button>
-                <button type="button" className="secondary-btn" onClick={() => onStatusChange('completed')}>
-                  End Session
-                </button>
+                {currentUser?.role === 'expert' && selectedSession.status === 'requested' ? (
+                  <>
+                    <button type="button" className="secondary-btn" onClick={() => onRespondToRequest('accept')}>
+                      Accept Request
+                    </button>
+                    <button type="button" className="secondary-btn" onClick={() => onRespondToRequest('decline')}>
+                      Decline Request
+                    </button>
+                  </>
+                ) : null}
+                {selectedSession.status === 'active' ? (
+                  <button type="button" className="secondary-btn" onClick={() => onStatusChange('completed')}>
+                    End Chat
+                  </button>
+                ) : (
+                  <span className="muted">
+                    {selectedSession.status === 'requested'
+                      ? 'Waiting for expert decision to start chat.'
+                      : 'This chat is closed.'}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -363,6 +482,7 @@ function SessionChatPage({ initialSessionId, currentUser }) {
               <textarea
                 rows="3"
                 value={draft.message}
+                disabled={!chatIsActive}
                 onChange={(event) => {
                   const value = event.target.value;
                   setDraft((prev) => ({ ...prev, message: value }));
@@ -376,10 +496,10 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                     senderName: draft.senderName
                   });
                 }}
-                placeholder="Type your message"
+                placeholder={chatIsActive ? 'Type your message' : 'Chat will be enabled when session is active'}
                 required
               />
-              <button type="submit" className="primary-btn">Send Message</button>
+              <button type="submit" className="primary-btn" disabled={!chatIsActive}>Send Message</button>
             </form>
           </>
         )}

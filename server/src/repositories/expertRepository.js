@@ -251,6 +251,30 @@ export const expertRepository = {
     );
   },
 
+  async findByUserId(userId) {
+    return withFallback(
+      () => findExpertFromDb('user_id = ?', Number(userId)),
+      () => experts.find((expert) => expert.userId === Number(userId)) || null
+    );
+  },
+
+  async updateAvailabilityByUserId(userId, availabilityStatus) {
+    const pool = getDbPool();
+    const [result] = await pool.query(
+      `
+        UPDATE experts
+        SET availability_status = ?,
+            is_online = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `,
+      [availabilityStatus, availabilityStatus === 'available' ? 1 : 0, Number(userId)]
+    );
+
+    if (!result.affectedRows) return null;
+    return this.findByUserId(userId);
+  },
+
   async deleteByIdentifier(identifier) {
     const isNumeric = /^\d+$/.test(String(identifier));
 

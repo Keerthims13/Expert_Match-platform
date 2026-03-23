@@ -129,12 +129,23 @@ function extractKeywords(doubt, knownSpecialties) {
   return [...new Set(keywords)].slice(0, 8);
 }
 
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 export const doubtService = {
-  async getDoubts() {
-    return doubtRepository.findAll();
+  async getDoubts(actor = null) {
+    const doubts = await doubtRepository.findAll();
+    if (!actor) return doubts;
+
+    return doubts.filter((doubt) => {
+      const ownerById = Number(doubt.requesterUserId) === Number(actor.id);
+      const ownerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
+      return ownerById || ownerByName;
+    });
   },
 
-  async assignExpert(doubtId, expertId) {
+  async assignExpert(doubtId, expertId, actor = null) {
     const numericDoubtId = Number(doubtId);
     const numericExpertId = Number(expertId);
 
@@ -149,6 +160,27 @@ export const doubtService = {
     const expert = await expertRepository.findById(numericExpertId);
     if (!expert) {
       throw new NotFoundError('Expert not found');
+    }
+
+    const doubt = await doubtRepository.findById(numericDoubtId);
+    if (!doubt) {
+      throw new NotFoundError('Doubt not found');
+    }
+
+    if (actor && actor.role === 'student') {
+      let isOwnerById = Number(doubt.requesterUserId) === Number(actor.id);
+      const isOwnerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
+
+      if (!isOwnerById && !doubt.requesterUserId && isOwnerByName) {
+        const claimed = await doubtRepository.claimOwnershipIfMissing(doubt.id, actor.id, actor.fullName);
+        isOwnerById = Number(claimed?.requesterUserId) === Number(actor.id);
+      }
+
+      if (!isOwnerById && !isOwnerByName) {
+        const error = new Error('Forbidden: you can assign experts only to your own doubts');
+        error.status = 403;
+        throw error;
+      }
     }
 
     const updated = await doubtRepository.assignExpert(numericDoubtId, numericExpertId);
@@ -182,11 +214,25 @@ export const doubtService = {
     };
   },
 
-  async deleteDoubt(id) {
+  async deleteDoubt(id, actor = null) {
     const numericId = Number(id);
 
     if (!Number.isInteger(numericId) || numericId <= 0) {
       throw new BadRequestError('id must be a positive integer');
+    }
+
+    if (actor && actor.role === 'student') {
+      const doubt = await doubtRepository.findById(numericId);
+      if (!doubt) {
+        throw new NotFoundError('Doubt not found');
+      }
+      const ownerById = Number(doubt.requesterUserId) === Number(actor.id);
+      const ownerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
+      if (!ownerById && !ownerByName) {
+        const error = new Error('Forbidden: only doubt owner can delete doubt');
+        error.status = 403;
+        throw error;
+      }
     }
 
     const deleted = await doubtRepository.deleteById(numericId);
@@ -199,6 +245,7 @@ export const doubtService = {
 
   async createDoubt(input) {
     const requesterName = String(input.requesterName || '').trim();
+    const requesterUserId = input.requesterUserId ? Number(input.requesterUserId) : null;
     const title = String(input.title || '').trim();
     const description = String(input.description || '').trim();
     const category = String(input.category || '').trim();
@@ -219,6 +266,6 @@ export const doubtService = {
       throw new BadRequestError('category is required');
     }
 
-    return doubtRepository.create({ requesterName, title, description, category });
+    return doubtRepository.create({ requesterUserId, requesterName, title, description, category });
   }
 };

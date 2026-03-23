@@ -5,7 +5,8 @@ import { initChatSocket } from './utils/chatSocket.js';
 const PORT = process.env.PORT || 5000;
 
 const httpServer = http.createServer(app);
-initChatSocket(httpServer);
+const io = initChatSocket(httpServer);
+app.set('io', io);
 
 const server = httpServer.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

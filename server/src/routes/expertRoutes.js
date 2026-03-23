@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { expertController } from '../controllers/expertController.js';
+import { requireAuth, requireRole } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
 router.get('/', expertController.getExpertList);
-router.post('/profile', expertController.createExpertProfile);
-router.delete('/:identifier', expertController.deleteExpertProfile);
+router.get('/me', requireAuth, requireRole('expert'), expertController.getMyExpertProfile);
+router.patch('/me/availability', requireAuth, requireRole('expert'), expertController.updateMyAvailability);
+router.post('/profile', requireAuth, requireRole('expert'), expertController.createExpertProfile);
+router.delete('/:identifier', requireAuth, requireRole('expert'), expertController.deleteExpertProfile);
 router.get('/:identifier', expertController.getExpertProfile);
 
 export default router;

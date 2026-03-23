@@ -2,13 +2,26 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
 const TOKEN_KEY = 'expertmatch_token';
 
 export function getAuthToken() {
-  return localStorage.getItem(TOKEN_KEY) || '';
+  const sessionToken = sessionStorage.getItem(TOKEN_KEY);
+  if (sessionToken) return sessionToken;
+
+  // One-time migration from old shared storage to per-tab storage.
+  const legacyToken = localStorage.getItem(TOKEN_KEY);
+  if (legacyToken) {
+    sessionStorage.setItem(TOKEN_KEY, legacyToken);
+    localStorage.removeItem(TOKEN_KEY);
+    return legacyToken;
+  }
+
+  return '';
 }
 
 export function setAuthToken(token) {
   if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
   } else {
+    sessionStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_KEY);
   }
 }

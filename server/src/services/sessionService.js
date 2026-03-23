@@ -1,4 +1,5 @@
 import { doubtRepository } from '../repositories/doubtRepository.js';
+import { expertRepository } from '../repositories/expertRepository.js';
 import { sessionRepository } from '../repositories/sessionRepository.js';
 
 class BadRequestError extends Error {
@@ -12,6 +13,13 @@ class NotFoundError extends Error {
   constructor(message) {
     super(message);
     this.status = 404;
+  }
+}
+
+class ForbiddenError extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 403;
   }
 }
 
@@ -38,21 +46,51 @@ function normalizeParticipant(input) {
   return { senderRole, senderName };
 }
 
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 export const sessionService = {
-  async getSessions() {
-    return sessionRepository.findAllSessions();
+  async getSessions(actor = null) {
+    const sessions = await sessionRepository.findAllSessions();
+    if (!actor) return sessions;
+
+    return sessions.filter((session) => {
+      if (actor.role === 'expert') {
+        const byUserId = Number(session.expert.userId) === Number(actor.id);
+        const byName = normalizeName(session.expert.fullName) === normalizeName(actor.fullName);
+        return byUserId || byName;
+      }
+
+      const byUserId = Number(session.doubt.requesterUserId) === Number(actor.id);
+      const byName = normalizeName(session.doubt.requesterName) === normalizeName(actor.fullName);
+      return byUserId || byName;
+    });
   },
 
-  async getSessionById(id) {
+  async getSessionById(id, actor = null) {
     const sessionId = toPositiveInt(id, 'sessionId');
     const session = await sessionRepository.findSessionById(sessionId);
     if (!session) {
       throw new NotFoundError('Session not found');
     }
+
+    if (actor) {
+      const canAccess = actor.role === 'expert'
+        ? (Number(session.expert.userId) === Number(actor.id)
+          || normalizeName(session.expert.fullName) === normalizeName(actor.fullName))
+        : (Number(session.doubt.requesterUserId) === Number(actor.id)
+          || normalizeName(session.doubt.requesterName) === normalizeName(actor.fullName));
+
+      if (!canAccess) {
+        throw new ForbiddenError('Forbidden: you are not a participant of this session');
+      }
+    }
+
     return session;
   },
 
-  async createSession(input) {
+  async createSession(input, actor = null) {
     const doubtId = toPositiveInt(input.doubtId, 'doubtId');
 
     const doubt = await doubtRepository.findById(doubtId);
@@ -66,30 +104,78 @@ export const sessionService = {
       throw new BadRequestError('Assigned expert is required before starting session');
     }
 
+    const expert = await expertRepository.findById(expertId);
+    if (!expert) {
+      throw new NotFoundError('Assigned expert not found');
+    }
+
+    if (!Number.isInteger(Number(expert.userId)) || Number(expert.userId) <= 0) {
+      throw new BadRequestError('Selected expert is currently unavailable for direct chat requests. Please choose an expert with an active account.');
+    }
+
+    if (actor && actor.role === 'student') {
+      const ownerById = Number(doubt.requesterUserId) === Number(actor.id);
+      const ownerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
+      if (!ownerById && !ownerByName) {
+        throw new ForbiddenError('Only the student who created this doubt can start a chat request.');
+      }
+    }
+
     const existing = await sessionRepository.findSessionByDoubtId(doubtId);
     if (existing) {
+      if (['declined', 'cancelled'].includes(String(existing.status || '').toLowerCase())) {
+        const reopened = await sessionRepository.markSessionRequested(
+          existing.id,
+          'Student requested to start a chat session again.'
+        );
+        return {
+          session: reopened,
+          created: false
+        };
+      }
+
       return {
         session: existing,
         created: false
       };
     }
 
-    const session = await sessionRepository.createSession({ doubtId, expertId });
+    const session = await sessionRepository.createSession({
+      doubtId,
+      expertId,
+      requestMessage: 'Student requested to start a chat session.'
+    });
     return {
       session,
       created: true
     };
   },
 
-  async updateSessionStatus(id, status) {
+  async respondToSessionRequest(id, decision, actor = null) {
     const sessionId = toPositiveInt(id, 'sessionId');
-    const normalized = String(status || '').trim().toLowerCase();
+    const normalizedDecision = String(decision || '').trim().toLowerCase();
 
-    if (!['active', 'completed', 'cancelled'].includes(normalized)) {
-      throw new BadRequestError('status must be active, completed, or cancelled');
+    if (!['accept', 'decline'].includes(normalizedDecision)) {
+      throw new BadRequestError('decision must be accept or decline');
     }
 
-    const updated = await sessionRepository.updateSessionStatus(sessionId, normalized);
+    const session = await this.getSessionById(sessionId, actor);
+    if (session.status !== 'requested') {
+      throw new BadRequestError('Session request is not pending');
+    }
+
+    if (!actor) {
+      throw new ForbiddenError('Forbidden');
+    }
+
+    const expertById = Number(session.expert.userId) === Number(actor.id);
+    const expertByName = normalizeName(session.expert.fullName) === normalizeName(actor.fullName);
+    if (!expertById && !expertByName) {
+      throw new ForbiddenError('Forbidden: only assigned expert can respond to chat request');
+    }
+
+    const nextStatus = normalizedDecision === 'accept' ? 'active' : 'declined';
+    const updated = await sessionRepository.updateSessionStatus(sessionId, nextStatus);
     if (!updated) {
       throw new NotFoundError('Session not found');
     }
@@ -97,20 +183,51 @@ export const sessionService = {
     return updated;
   },
 
-  async getMessages(id) {
+  async updateSessionStatus(id, status, actor = null) {
     const sessionId = toPositiveInt(id, 'sessionId');
-    const session = await sessionRepository.findSessionById(sessionId);
-    if (!session) {
+    const normalized = String(status || '').trim().toLowerCase();
+
+    if (!['completed', 'cancelled'].includes(normalized)) {
+      throw new BadRequestError('status must be completed or cancelled');
+    }
+
+    if (!actor) {
+      throw new ForbiddenError('Forbidden');
+    }
+
+    const session = await this.getSessionById(sessionId, actor);
+    const isExpertParticipant = Number(session.expert.userId) === Number(actor.id)
+      || normalizeName(session.expert.fullName) === normalizeName(actor.fullName);
+    const isStudentParticipant = Number(session.doubt.requesterUserId) === Number(actor.id)
+      || normalizeName(session.doubt.requesterName) === normalizeName(actor.fullName);
+
+    if (!isExpertParticipant && !isStudentParticipant) {
+      throw new ForbiddenError('Forbidden: only session participants can end chat');
+    }
+
+    const updated = await sessionRepository.updateSessionStatus(sessionId, normalized, {
+      endedByRole: actor.role,
+      endedByName: actor.fullName
+    });
+    if (!updated) {
       throw new NotFoundError('Session not found');
     }
+
+    return updated;
+  },
+
+  async getMessages(id, actor = null) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    await this.getSessionById(sessionId, actor);
     return sessionRepository.findMessagesBySessionId(sessionId);
   },
 
-  async createMessage(id, input) {
+  async createMessage(id, input, actor = null) {
     const sessionId = toPositiveInt(id, 'sessionId');
-    const session = await sessionRepository.findSessionById(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session not found');
+    const session = await this.getSessionById(sessionId, actor);
+
+    if (session.status !== 'active') {
+      throw new ForbiddenError('Chat is not active. Please wait for expert approval or start a new request.');
     }
 
     const { senderRole, senderName } = normalizeParticipant(input);
@@ -118,6 +235,15 @@ export const sessionService = {
 
     if (!message) {
       throw new BadRequestError('message is required');
+    }
+
+    if (actor) {
+      if (String(actor.role).toLowerCase() !== senderRole) {
+        throw new ForbiddenError('Forbidden: senderRole must match authenticated user role');
+      }
+      if (String(actor.fullName || '').trim() !== senderName) {
+        throw new ForbiddenError('Forbidden: senderName must match authenticated user');
+      }
     }
 
     const created = await sessionRepository.createMessage({
@@ -137,8 +263,13 @@ export const sessionService = {
     return sessionRepository.markMessageDelivered(numericMessageId);
   },
 
-  async getUnreadCounts(input) {
+  async getUnreadCounts(input, actor = null) {
     const { senderRole, senderName } = normalizeParticipant(input);
+    if (actor) {
+      if (String(actor.role).toLowerCase() !== senderRole || String(actor.fullName || '').trim() !== senderName) {
+        throw new ForbiddenError('Forbidden');
+      }
+    }
     const counts = await sessionRepository.findUnreadCountsByParticipant(senderRole, senderName);
 
     return counts.reduce((acc, item) => {
@@ -147,14 +278,16 @@ export const sessionService = {
     }, {});
   },
 
-  async markSessionRead(id, input) {
+  async markSessionRead(id, input, actor = null) {
     const sessionId = toPositiveInt(id, 'sessionId');
-    const session = await sessionRepository.findSessionById(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session not found');
-    }
+    await this.getSessionById(sessionId, actor);
 
     const { senderRole, senderName } = normalizeParticipant(input);
+    if (actor) {
+      if (String(actor.role).toLowerCase() !== senderRole || String(actor.fullName || '').trim() !== senderName) {
+        throw new ForbiddenError('Forbidden');
+      }
+    }
     await sessionRepository.markSessionReadForParticipant(sessionId, senderRole, senderName);
     const seenMessageIds = await sessionRepository.markMessagesSeenForParticipant(sessionId, senderRole, senderName);
 
@@ -180,5 +313,18 @@ export const sessionService = {
       seenMessageIds,
       markedAt: new Date().toISOString()
     };
+  },
+
+  async scheduleSessionStart(id) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    const session = await sessionRepository.findSessionById(sessionId);
+    if (!session) {
+      throw new NotFoundError('Session not found');
+    }
+    if (String(session.status || '').toLowerCase() !== 'active') {
+      return session;
+    }
+
+    return sessionRepository.scheduleSessionStart(sessionId);
   }
 };

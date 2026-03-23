@@ -58,6 +58,21 @@ export async function updateSessionStatus(sessionId, status) {
   return payload.data;
 }
 
+export async function respondToSessionRequest(sessionId, decision) {
+  const payload = await apiFetch(
+    `/api/sessions/${sessionId}/respond`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ decision })
+    },
+    'Failed to respond to session request'
+  );
+  return payload.data;
+}
+
 export async function fetchUnreadCounts() {
   const payload = await apiFetch('/api/sessions/unread', {}, 'Failed to fetch unread counts');
   return payload.data || {};

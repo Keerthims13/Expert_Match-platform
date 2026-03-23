@@ -31,10 +31,36 @@ export const expertController = {
 
   async createExpertProfile(req, res, next) {
     try {
-      const profile = await expertService.createExpertProfile(req.body);
+      const profile = await expertService.createExpertProfile(req.body, req.user);
 
       res.status(201).json({
         message: 'Expert profile created successfully',
+        data: profile
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getMyExpertProfile(req, res, next) {
+    try {
+      const profile = await expertService.getMyExpertProfile(req.user.id);
+
+      res.json({
+        message: 'My expert profile fetched successfully',
+        data: profile
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateMyAvailability(req, res, next) {
+    try {
+      const profile = await expertService.updateMyAvailability(req.user.id, req.body.availabilityStatus);
+
+      res.json({
+        message: 'Availability updated successfully',
         data: profile
       });
     } catch (error) {

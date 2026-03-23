@@ -3,6 +3,7 @@ import { getDbPool } from '../config/db.js';
 function mapDoubtRow(row) {
   return {
     id: row.id,
+    requesterUserId: row.requester_user_id || null,
     requesterName: row.requester_name,
     title: row.title,
     description: row.description,
@@ -61,9 +62,9 @@ export const doubtRepository = {
   async create(payload) {
     const pool = getDbPool();
     const [result] = await pool.query(
-      `INSERT INTO doubts (requester_name, title, description, category, status)
-       VALUES (?, ?, ?, ?, 'open')`,
-      [payload.requesterName, payload.title, payload.description, payload.category]
+      `INSERT INTO doubts (requester_user_id, requester_name, title, description, category, status)
+       VALUES (?, ?, ?, ?, ?, 'open')`,
+      [payload.requesterUserId || null, payload.requesterName, payload.title, payload.description, payload.category]
     );
 
     const [rows] = await pool.query('SELECT * FROM doubts WHERE id = ?', [result.insertId]);
@@ -91,6 +92,23 @@ export const doubtRepository = {
       return null;
     }
 
+    return this.findById(doubtId);
+  },
+
+  async claimOwnershipIfMissing(doubtId, requesterUserId, requesterName) {
+    const pool = getDbPool();
+    const [result] = await pool.query(
+      `
+        UPDATE doubts
+        SET requester_user_id = ?
+        WHERE id = ?
+          AND requester_user_id IS NULL
+          AND LOWER(TRIM(requester_name)) = LOWER(TRIM(?))
+      `,
+      [Number(requesterUserId), Number(doubtId), String(requesterName || '')]
+    );
+
+    if (!result.affectedRows) return this.findById(doubtId);
     return this.findById(doubtId);
   }
 };

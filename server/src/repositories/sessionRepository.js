@@ -6,16 +6,25 @@ function mapSessionRow(row) {
     doubtId: row.doubt_id,
     expertId: row.expert_id,
     status: row.status,
+    requestMessage: row.request_message || null,
+    requestedAt: row.requested_at || null,
+    acceptedAt: row.accepted_at || null,
+    declinedAt: row.declined_at || null,
+    declineReason: row.decline_reason || null,
+    endedByRole: row.ended_by_role || null,
+    endedByName: row.ended_by_name || null,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     createdAt: row.created_at,
     doubt: {
       id: row.doubt_id,
       title: row.doubt_title,
-      requesterName: row.requester_name
+      requesterName: row.requester_name,
+      requesterUserId: row.requester_user_id || null
     },
     expert: {
       id: row.expert_id,
+      userId: row.expert_user_id || null,
       fullName: row.expert_name,
       title: row.expert_title
     }
@@ -54,12 +63,26 @@ function isMissingMessageStatusColumns(error) {
   );
 }
 
+function isMissingSessionWorkflowColumns(error) {
+  if (error?.code !== 'ER_BAD_FIELD_ERROR') return false;
+  const message = String(error?.sqlMessage || '');
+  return (
+    message.includes('request_message')
+    || message.includes('requested_at')
+    || message.includes('accepted_at')
+    || message.includes('declined_at')
+    || message.includes('decline_reason')
+    || message.includes('ended_by_role')
+    || message.includes('ended_by_name')
+  );
+}
+
 export const sessionRepository = {
   async findAllSessions() {
     const pool = getDbPool();
     const [rows] = await pool.query(
       `
-        SELECT s.*, d.title AS doubt_title, d.requester_name, e.full_name AS expert_name, e.title AS expert_title
+        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title
         FROM sessions s
         JOIN doubts d ON d.id = s.doubt_id
         JOIN experts e ON e.id = s.expert_id
@@ -74,7 +97,7 @@ export const sessionRepository = {
     const pool = getDbPool();
     const [rows] = await pool.query(
       `
-        SELECT s.*, d.title AS doubt_title, d.requester_name, e.full_name AS expert_name, e.title AS expert_title
+        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title
         FROM sessions s
         JOIN doubts d ON d.id = s.doubt_id
         JOIN experts e ON e.id = s.expert_id
@@ -97,27 +120,163 @@ export const sessionRepository = {
 
   async createSession(payload) {
     const pool = getDbPool();
-    const [result] = await pool.query(
-      `
-        INSERT INTO sessions (doubt_id, expert_id, status, started_at)
-        VALUES (?, ?, 'active', CURRENT_TIMESTAMP)
-      `,
-      [payload.doubtId, payload.expertId]
-    );
+    let result;
+    try {
+      [result] = await pool.query(
+        `
+          INSERT INTO sessions (doubt_id, expert_id, status, request_message, requested_at)
+          VALUES (?, ?, 'requested', ?, CURRENT_TIMESTAMP)
+        `,
+        [payload.doubtId, payload.expertId, payload.requestMessage || 'Student requested to start a chat session.']
+      );
+    } catch (error) {
+      if (!isMissingSessionWorkflowColumns(error)) throw error;
+      [result] = await pool.query(
+        `
+          INSERT INTO sessions (doubt_id, expert_id, status, started_at)
+          VALUES (?, ?, 'requested', NULL)
+        `,
+        [payload.doubtId, payload.expertId]
+      );
+    }
 
     return this.findSessionById(result.insertId);
   },
 
-  async updateSessionStatus(id, status) {
+  async markSessionRequested(id, requestMessage) {
     const pool = getDbPool();
-    const endedAtSql = status === 'completed' ? ', ended_at = CURRENT_TIMESTAMP' : '';
-
-    const [result] = await pool.query(
-      `UPDATE sessions SET status = ?${endedAtSql} WHERE id = ?`,
-      [status, id]
-    );
+    let result;
+    try {
+      [result] = await pool.query(
+        `
+          UPDATE sessions
+          SET status = 'requested',
+              request_message = ?,
+              requested_at = CURRENT_TIMESTAMP,
+              accepted_at = NULL,
+              declined_at = NULL,
+              decline_reason = NULL,
+              started_at = NULL,
+              ended_at = NULL,
+              ended_by_role = NULL,
+              ended_by_name = NULL
+          WHERE id = ?
+        `,
+        [requestMessage || 'Student requested to start a chat session.', id]
+      );
+    } catch (error) {
+      if (!isMissingSessionWorkflowColumns(error)) throw error;
+      [result] = await pool.query(
+        `
+          UPDATE sessions
+          SET status = 'requested',
+              started_at = NULL,
+              ended_at = NULL
+          WHERE id = ?
+        `,
+        [id]
+      );
+    }
 
     if (!result.affectedRows) return null;
+    return this.findSessionById(id);
+  },
+
+  async updateSessionStatus(id, status, options = {}) {
+    const pool = getDbPool();
+    const normalized = String(status || '').trim().toLowerCase();
+    let setSql = 'status = ?';
+    const values = [normalized];
+
+    if (normalized === 'active') {
+      setSql += `,
+        accepted_at = CURRENT_TIMESTAMP,
+        declined_at = NULL,
+        decline_reason = NULL,
+        ended_at = NULL,
+        ended_by_role = NULL,
+        ended_by_name = NULL,
+        started_at = NULL`;
+    }
+
+    if (normalized === 'declined') {
+      setSql += `,
+        declined_at = CURRENT_TIMESTAMP,
+        accepted_at = NULL,
+        started_at = NULL,
+        ended_at = NULL,
+        decline_reason = ?`;
+      values.push(options.declineReason || 'The expert is currently unavailable for chat. Please choose another expert or try again later.');
+    }
+
+    if (normalized === 'completed' || normalized === 'cancelled') {
+      setSql += ', ended_at = CURRENT_TIMESTAMP, ended_by_role = ?, ended_by_name = ?';
+      values.push(options.endedByRole || null, options.endedByName || null);
+    }
+
+    let result;
+    try {
+      [result] = await pool.query(
+        `UPDATE sessions SET ${setSql} WHERE id = ?`,
+        [...values, id]
+      );
+    } catch (error) {
+      if (!isMissingSessionWorkflowColumns(error)) throw error;
+
+      if (normalized === 'active') {
+        [result] = await pool.query(
+          `
+            UPDATE sessions
+            SET status = 'active',
+                started_at = NULL,
+                ended_at = NULL
+            WHERE id = ?
+          `,
+          [id]
+        );
+      } else if (normalized === 'declined') {
+        [result] = await pool.query(
+          `
+            UPDATE sessions
+            SET status = 'declined',
+                started_at = NULL,
+                ended_at = NULL
+            WHERE id = ?
+          `,
+          [id]
+        );
+      } else {
+        [result] = await pool.query(
+          `
+            UPDATE sessions
+            SET status = ?,
+                ended_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `,
+          [normalized, id]
+        );
+      }
+    }
+
+    if (!result.affectedRows) return null;
+    return this.findSessionById(id);
+  },
+
+  async scheduleSessionStart(id) {
+    const pool = getDbPool();
+    const [result] = await pool.query(
+      `
+        UPDATE sessions
+        SET started_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND)
+        WHERE id = ? AND status = 'active' AND started_at IS NULL
+      `,
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return this.findSessionById(id);
+    }
+
     return this.findSessionById(id);
   },
 

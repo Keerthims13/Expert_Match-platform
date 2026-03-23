@@ -463,6 +463,20 @@ select {
   min-height: 1.1rem;
 }
 
+.timer-display {
+  margin: 0.4rem 0 0;
+  color: #d97706;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+  min-height: 1.1rem;
+}
+
+.session-inline-note {
+  margin-top: 0.55rem;
+  margin-bottom: 0;
+}
+
 .chat-box {
   margin-top: 0.8rem;
   border: 1px solid var(--line);

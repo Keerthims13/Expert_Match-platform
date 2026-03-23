@@ -39,10 +39,6 @@ function parseCommaList(value) {
     .filter(Boolean);
 }
 
-function generateTempUserId() {
-  return Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1000);
-}
-
 async function createUniqueSlug(baseValue) {
   const baseSlug = slugify(baseValue) || 'expert';
   let candidateSlug = baseSlug;
@@ -85,15 +81,51 @@ export const expertService = {
     return expert;
   },
 
-  async createExpertProfile(input) {
-    const hasUserId = input.userId !== undefined && input.userId !== null && input.userId !== '';
-    const userId = hasUserId ? Number(input.userId) : generateTempUserId();
+  async getMyExpertProfile(userId) {
+    const numericUserId = Number(userId);
+    if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+      throw new BadRequestError('userId must be a positive integer');
+    }
+
+    const expert = await expertRepository.findByUserId(numericUserId);
+    if (!expert) {
+      throw new NotFoundError('Expert profile not found');
+    }
+    return expert;
+  },
+
+  async updateMyAvailability(userId, availabilityStatus) {
+    const normalizedStatus = String(availabilityStatus || '').trim().toLowerCase();
+    if (!['available', 'busy', 'offline'].includes(normalizedStatus)) {
+      throw new BadRequestError('availabilityStatus must be available, busy, or offline');
+    }
+
+    const updated = await expertRepository.updateAvailabilityByUserId(userId, normalizedStatus);
+    if (!updated) {
+      throw new NotFoundError('Expert profile not found');
+    }
+
+    return updated;
+  },
+
+  async createExpertProfile(input, actor = null) {
+    if (!actor) {
+      throw new BadRequestError('Authenticated user is required');
+    }
+
+    if (String(actor.role || '').toLowerCase() !== 'expert') {
+      const error = new Error('Forbidden: only expert accounts can create expert profile');
+      error.status = 403;
+      throw error;
+    }
+
+    const userId = Number(actor.id);
     const fullName = String(input.fullName || '').trim();
     const skills = parseCommaList(input.skills);
     const pricePerMinute = Number(input.pricePerMinute);
     const availabilityStatus = String(input.availabilityStatus || '').trim().toLowerCase();
 
-    if (hasUserId && (!Number.isInteger(userId) || userId <= 0)) {
+    if (!Number.isInteger(userId) || userId <= 0) {
       throw new BadRequestError('userId must be a positive integer');
     }
 
@@ -118,7 +150,7 @@ export const expertService = {
     const payload = {
       userId,
       slug,
-      fullName,
+      fullName: fullName || String(actor.fullName || '').trim(),
       title: String(input.title || 'Independent Expert').trim(),
       headline: String(input.headline || 'Available for practical problem solving').trim(),
       category: String(input.category || 'General').trim(),
