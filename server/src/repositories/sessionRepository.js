@@ -77,6 +77,10 @@ function isMissingSessionWorkflowColumns(error) {
   );
 }
 
+function isMissingSessionRatingsTable(error) {
+  return error?.code === 'ER_NO_SUCH_TABLE' && String(error?.sqlMessage || '').includes('session_ratings');
+}
+
 export const sessionRepository = {
   async findAllSessions() {
     const pool = getDbPool();
@@ -190,6 +194,17 @@ export const sessionRepository = {
 
     if (normalized === 'active') {
       setSql += `,
+        accepted_at = COALESCE(accepted_at, CURRENT_TIMESTAMP),
+        declined_at = NULL,
+        decline_reason = NULL,
+        ended_at = NULL,
+        ended_by_role = NULL,
+        ended_by_name = NULL,
+        started_at = COALESCE(started_at, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND))`;
+    }
+
+    if (normalized === 'accepted_pending') {
+      setSql += `,
         accepted_at = CURRENT_TIMESTAMP,
         declined_at = NULL,
         decline_reason = NULL,
@@ -267,8 +282,11 @@ export const sessionRepository = {
     const [result] = await pool.query(
       `
         UPDATE sessions
-        SET started_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND)
-        WHERE id = ? AND status = 'active' AND started_at IS NULL
+        SET status = 'active',
+            started_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND)
+        WHERE id = ?
+          AND status IN ('accepted_pending', 'active')
+          AND started_at IS NULL
       `,
       [id]
     );
@@ -478,5 +496,90 @@ export const sessionRepository = {
     );
 
     return rows.map(mapMessageRow);
+  },
+
+  async findSessionRating(sessionId) {
+    const pool = getDbPool();
+    try {
+      const [rows] = await pool.query(
+        `
+          SELECT id, session_id, expert_id, student_user_id, rating, review_text, created_at, updated_at
+          FROM session_ratings
+          WHERE session_id = ?
+          LIMIT 1
+        `,
+        [sessionId]
+      );
+
+      if (!rows.length) return null;
+      const row = rows[0];
+      return {
+        id: row.id,
+        sessionId: row.session_id,
+        expertId: row.expert_id,
+        studentUserId: row.student_user_id,
+        rating: Number(row.rating),
+        reviewText: row.review_text || '',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    } catch (error) {
+      if (!isMissingSessionRatingsTable(error)) throw error;
+      return null;
+    }
+  },
+
+  async upsertSessionRating(payload) {
+    const pool = getDbPool();
+    try {
+      await pool.query(
+        `
+          INSERT INTO session_ratings (session_id, expert_id, student_user_id, rating, review_text)
+          VALUES (?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            rating = VALUES(rating),
+            review_text = VALUES(review_text),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          payload.sessionId,
+          payload.expertId,
+          payload.studentUserId,
+          payload.rating,
+          payload.reviewText || null
+        ]
+      );
+
+      return this.findSessionRating(payload.sessionId);
+    } catch (error) {
+      if (!isMissingSessionRatingsTable(error)) throw error;
+      const notReadyError = new Error('Rating feature is not ready. Please run latest SQL migration and try again.');
+      notReadyError.status = 500;
+      throw notReadyError;
+    }
+  },
+
+  async findLatestByDoubtIds(doubtIds = []) {
+    const numericIds = [...new Set(doubtIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!numericIds.length) return [];
+
+    const pool = getDbPool();
+    const placeholders = numericIds.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `
+        SELECT s.*
+        FROM sessions s
+        INNER JOIN (
+          SELECT doubt_id, MAX(id) AS latest_id
+          FROM sessions
+          WHERE doubt_id IN (${placeholders})
+          GROUP BY doubt_id
+        ) latest
+          ON latest.latest_id = s.id
+      `,
+      numericIds
+    );
+
+    return rows;
   }
 };

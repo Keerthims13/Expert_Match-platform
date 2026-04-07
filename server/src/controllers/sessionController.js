@@ -1,4 +1,6 @@
 import { sessionService } from '../services/sessionService.js';
+import { userRepository } from '../repositories/userRepository.js';
+import { mailService } from '../services/mailService.js';
 
 function toIdentityKey(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
@@ -120,12 +122,22 @@ export const sessionController = {
     try {
       let session = await sessionService.respondToSessionRequest(req.params.id, req.body.decision, req.user);
 
-      const io = req.app.get('io');
-      const room = io?.sockets?.adapter?.rooms?.get(`session:${session.id}`);
-      const onlineCount = room ? room.size : 0;
       const normalizedDecision = String(req.body.decision || '').trim().toLowerCase();
-      if (normalizedDecision === 'accept' && onlineCount > 1) {
-        session = await sessionService.scheduleSessionStart(session.id);
+
+      if (normalizedDecision === 'accept') {
+        const requesterUserId = Number(session?.doubt?.requesterUserId);
+        if (Number.isInteger(requesterUserId) && requesterUserId > 0) {
+          const studentUser = await userRepository.findById(requesterUserId);
+          if (studentUser?.email) {
+            await mailService.sendStudentRequestAccepted({
+              studentEmail: studentUser.email,
+              studentName: studentUser.fullName,
+              expertName: req.user.fullName,
+              doubtTitle: session?.doubt?.title,
+              sessionId: session.id
+            });
+          }
+        }
       }
 
       emitSessionLifecycleEvent(req, 'session_request_responded', session, req.user, {
@@ -179,6 +191,54 @@ export const sessionController = {
       res.json({
         message: 'Session marked as read',
         data
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getSessionRating(req, res, next) {
+    try {
+      const rating = await sessionService.getSessionRating(req.params.id, req.user);
+      res.json({
+        message: 'Session rating fetched successfully',
+        data: rating
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getSessionBilling(req, res, next) {
+    try {
+      const billing = await sessionService.getSessionBilling(req.params.id, req.user);
+      res.json({
+        message: 'Session billing fetched successfully',
+        data: billing
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async submitSessionRating(req, res, next) {
+    try {
+      const rating = await sessionService.submitSessionRating(req.params.id, req.body, req.user);
+      res.status(201).json({
+        message: 'Session rating saved successfully',
+        data: rating
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async checkAndActivateSession(req, res, next) {
+    try {
+      const session = await sessionService.checkAndActivateSession(req.params.id);
+      res.json({
+        message: 'Session status checked and activated if ready',
+        data: session
       });
     } catch (error) {
       next(error);

@@ -1,4 +1,5 @@
 import { expertRepository } from '../repositories/expertRepository.js';
+import { userRepository } from '../repositories/userRepository.js';
 
 class NotFoundError extends Error {
   constructor(message) {
@@ -108,6 +109,14 @@ export const expertService = {
     return updated;
   },
 
+  async updateMyProfileImage(userId, profileImageUrl) {
+    const updated = await expertRepository.updateProfileImageByUserId(userId, profileImageUrl);
+    if (!updated) {
+      throw new NotFoundError('Expert profile not found');
+    }
+    return updated;
+  },
+
   async createExpertProfile(input, actor = null) {
     if (!actor) {
       throw new BadRequestError('Authenticated user is required');
@@ -145,6 +154,9 @@ export const expertService = {
       throw new BadRequestError('availabilityStatus must be available, busy, or offline');
     }
 
+    const actorUser = await userRepository.findById(userId);
+    const fallbackProfileImageUrl = String(actorUser?.profileImageUrl || '').trim();
+
     const preferredSlug = input.slug ? String(input.slug) : fullName;
     const slug = await createUniqueSlug(preferredSlug);
     const payload = {
@@ -160,7 +172,7 @@ export const expertService = {
       about: String(input.about || '').trim(),
       education: String(input.education || '').trim(),
       languages: parseCommaList(input.languages),
-      profileImageUrl: String(input.profileImageUrl || '').trim(),
+      profileImageUrl: String(input.profileImageUrl || fallbackProfileImageUrl || '').trim(),
       skills
     };
 

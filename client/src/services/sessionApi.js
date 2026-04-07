@@ -6,17 +6,34 @@ export async function fetchSessions() {
 }
 
 export async function createSession(data) {
-  const payload = await apiFetch(
-    '/api/sessions',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
+  let payload;
+  try {
+    payload = await apiFetch(
+      '/api/sessions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
       },
-      body: JSON.stringify(data)
-    },
-    'Failed to create session'
-  );
+      'Failed to create session'
+    );
+  } catch (_error) {
+    if (!data?.doubtId) throw _error;
+    payload = await apiFetch(
+      `/api/doubts/${data.doubtId}/sessions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      },
+      'Failed to create session'
+    );
+  }
+
   return {
     ...payload.data,
     _meta: payload.meta || {}
@@ -59,17 +76,33 @@ export async function updateSessionStatus(sessionId, status) {
 }
 
 export async function respondToSessionRequest(sessionId, decision) {
-  const payload = await apiFetch(
-    `/api/sessions/${sessionId}/respond`,
-    {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json'
+  let payload;
+  try {
+    payload = await apiFetch(
+      `/api/sessions/${sessionId}/respond`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ decision })
       },
-      body: JSON.stringify({ decision })
-    },
-    'Failed to respond to session request'
-  );
+      'Failed to respond to session request'
+    );
+  } catch (_error) {
+    payload = await apiFetch(
+      `/api/sessions/${sessionId}/response`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ decision })
+      },
+      'Failed to respond to session request'
+    );
+  }
+
   return payload.data;
 }
 
@@ -89,6 +122,46 @@ export async function markSessionRead(sessionId) {
       body: JSON.stringify({})
     },
     'Failed to mark session as read'
+  );
+  return payload.data;
+}
+
+export async function fetchSessionRating(sessionId) {
+  const payload = await apiFetch(`/api/sessions/${sessionId}/rating`, {}, 'Failed to fetch session rating');
+  return payload.data;
+}
+
+export async function fetchSessionBilling(sessionId) {
+  const payload = await apiFetch(`/api/sessions/${sessionId}/billing`, {}, 'Failed to fetch session billing');
+  return payload.data;
+}
+
+export async function submitSessionRating(sessionId, data) {
+  const payload = await apiFetch(
+    `/api/sessions/${sessionId}/rating`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    },
+    'Failed to submit session rating'
+  );
+  return payload.data;
+}
+
+export async function checkAndActivateSession(sessionId) {
+  const payload = await apiFetch(
+    `/api/sessions/${sessionId}/check-activate`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    },
+    'Failed to check and activate session'
   );
   return payload.data;
 }

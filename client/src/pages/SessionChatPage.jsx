@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  fetchSessionRating,
+  fetchSessionBilling,
   fetchUnreadCounts,
   fetchSessionMessages,
   fetchSessions,
   markSessionRead,
   respondToSessionRequest,
-  updateSessionStatus
+  submitSessionRating,
+  updateSessionStatus,
+  checkAndActivateSession
 } from '../services/sessionApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
 
@@ -15,7 +19,7 @@ const initialDraft = {
   message: ''
 };
 
-function SessionChatPage({ initialSessionId, currentUser }) {
+function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState(initialSessionId || null);
   const [messages, setMessages] = useState([]);
@@ -31,12 +35,24 @@ function SessionChatPage({ initialSessionId, currentUser }) {
   const [presenceBySession, setPresenceBySession] = useState({});
   const [unreadBySession, setUnreadBySession] = useState({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [ratingLoading, setRatingLoading] = useState(false);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [sessionRating, setSessionRating] = useState(null);
+  const [ratingForm, setRatingForm] = useState({ rating: 5, reviewText: '' });
+  const [successMessage, setSuccessMessage] = useState('');
+  const [sessionBilling, setSessionBilling] = useState(null);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) || null,
     [sessions, selectedSessionId]
   );
-  const chatIsActive = String(selectedSession?.status || '').toLowerCase() === 'active';
+  const chatIsActive = useMemo(() => {
+    if (String(selectedSession?.status || '').toLowerCase() !== 'active') return false;
+    if (!selectedSession?.startedAt) return false;
+    const startAtMs = new Date(selectedSession.startedAt).getTime();
+    if (!Number.isFinite(startAtMs)) return false;
+    return Date.now() >= startAtMs;
+  }, [selectedSession?.status, selectedSession?.startedAt]);
 
   function isCurrentParticipant(senderRole, senderName) {
     return (
@@ -146,6 +162,8 @@ function SessionChatPage({ initialSessionId, currentUser }) {
     function onSessionLifecycle(payload) {
       const incoming = payload?.session;
       if (!incoming?.id) return;
+      
+      // Immediately update local state with new session data
       setSessions((prev) => {
         const index = prev.findIndex((item) => Number(item.id) === Number(incoming.id));
         if (index === -1) {
@@ -155,6 +173,21 @@ function SessionChatPage({ initialSessionId, currentUser }) {
         clone[index] = incoming;
         return clone;
       });
+      
+      // If this is the selected session and status changed to active, ensure it's in view
+      if (Number(incoming.id) === Number(selectedSessionId)) {
+        // Force a visual update by triggering message load
+        if (String(incoming.status).toLowerCase() === 'active') {
+          fetchSessionMessages(selectedSessionId)
+            .then((messages) => {
+              setMessages(messages);
+            })
+            .catch(() => {});
+        }
+      }
+      
+      // Refresh from server to ensure we have latest data
+      loadSessions(false);
     }
 
     socket.on('new_message', onNewMessage);
@@ -187,6 +220,7 @@ function SessionChatPage({ initialSessionId, currentUser }) {
       if (!selectedSessionId && data.length) {
         setSelectedSessionId(initialSessionId || data[0].id);
       } else if (selectedSessionId && !data.some((item) => Number(item.id) === Number(selectedSessionId))) {
+        // If selected session no longer exists, pick a pending/active one or the first one
         setSelectedSessionId(data.length ? data[0].id : null);
       }
     } catch (loadError) {
@@ -199,6 +233,14 @@ function SessionChatPage({ initialSessionId, currentUser }) {
   useEffect(() => {
     loadSessions();
     loadUnreadCounts();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadSessions(false);
+    }, 1500);
+
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -219,7 +261,7 @@ function SessionChatPage({ initialSessionId, currentUser }) {
     const interval = setInterval(() => {
       loadSessions(false);
       loadUnreadCounts();
-    }, 10000);
+    }, 3000);
 
     function onFocus() {
       loadSessions(false);
@@ -251,7 +293,6 @@ function SessionChatPage({ initialSessionId, currentUser }) {
 
   useEffect(() => {
     if (!selectedSessionId) {
-      setMessages([]);
       return;
     }
 
@@ -276,8 +317,25 @@ function SessionChatPage({ initialSessionId, currentUser }) {
         if (active) setLoadingMessages(false);
       });
 
+    // Aggressive polling while a session is selected to catch status changes
+    const aggressiveInterval = setInterval(async () => {
+      if (!active || !selectedSessionId) return;
+      
+      try {
+        // Check if session needs to be activated (if both users are online)
+        if (selectedSession && String(selectedSession.status || '').toLowerCase() === 'accepted_pending') {
+          await checkAndActivateSession(selectedSessionId);
+        }
+      } catch (err) {
+        // Silently fail - will retry on next interval
+      }
+      
+      loadSessions(false);
+    }, 500); // Check every 500ms while session is selected
+
     return () => {
       active = false;
+      clearInterval(aggressiveInterval);
     };
   }, [selectedSessionId]);
 
@@ -287,17 +345,95 @@ function SessionChatPage({ initialSessionId, currentUser }) {
     }
 
     const socket = getChatSocket();
+    
     socket.emit('join_session', {
       sessionId: selectedSessionId,
       senderName: draft.senderName,
       senderRole: draft.senderRole
+    }, (ack) => {
+      // Server confirmed join succeeded - immediately refresh sessions
+      setTimeout(() => {
+        loadSessions(false);
+      }, 100);
     });
+    
+    // Also immediately refresh after a very short delay to catch status changes
+    const refreshTimer = setTimeout(() => {
+      loadSessions(false);
+    }, 300);
+    
     setUnreadBySession((prev) => ({ ...prev, [selectedSessionId]: 0 }));
 
     return () => {
+      clearTimeout(refreshTimer);
       socket.emit('leave_session', { sessionId: selectedSessionId });
     };
   }, [selectedSessionId, draft.senderName, draft.senderRole]);
+
+  useEffect(() => {
+    if (!selectedSessionId || currentUser?.role !== 'student') {
+      setSessionRating(null);
+      return;
+    }
+
+    if (String(selectedSession?.status || '').toLowerCase() !== 'completed') {
+      setSessionRating(null);
+      return;
+    }
+
+    let active = true;
+    setRatingLoading(true);
+
+    fetchSessionRating(selectedSessionId)
+      .then((data) => {
+        if (!active) return;
+        setSessionRating(data);
+        if (data?.rating) {
+          setRatingForm({
+            rating: Number(data.rating),
+            reviewText: data.reviewText || ''
+          });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setSessionRating(null);
+      })
+      .finally(() => {
+        if (active) setRatingLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSessionId, selectedSession?.status, currentUser?.role]);
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setSessionBilling(null);
+      return;
+    }
+
+    if (String(selectedSession?.status || '').toLowerCase() !== 'completed') {
+      setSessionBilling(null);
+      return;
+    }
+
+    let active = true;
+    fetchSessionBilling(selectedSessionId)
+      .then((data) => {
+        if (!active) return;
+        setSessionBilling(data || null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSessionBilling(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSessionId, selectedSession?.status]);
 
   useEffect(() => {
     if (!selectedSession?.startedAt) {
@@ -307,13 +443,13 @@ function SessionChatPage({ initialSessionId, currentUser }) {
 
     const interval = setInterval(() => {
       const startTime = new Date(selectedSession.startedAt).getTime();
-      const now = Date.now();
-      const elapsed = Math.floor((now - startTime) / 1000);
+      const endTime = selectedSession.endedAt ? new Date(selectedSession.endedAt).getTime() : Date.now();
+      const elapsed = Math.floor((endTime - startTime) / 1000);
       setElapsedSeconds(elapsed < 0 ? 0 : elapsed);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [selectedSession?.startedAt, selectedSession?.id]);
+  }, [selectedSession?.startedAt, selectedSession?.endedAt, selectedSession?.id]);
 
   async function onSend(event) {
     event.preventDefault();
@@ -377,6 +513,44 @@ function SessionChatPage({ initialSessionId, currentUser }) {
     }
   }
 
+  async function onSubmitRating(event) {
+    event.preventDefault();
+    if (!selectedSessionId) return;
+
+    try {
+      setRatingSubmitting(true);
+      setError('');
+      setSuccessMessage('');
+      const saved = await submitSessionRating(selectedSessionId, {
+        rating: Number(ratingForm.rating),
+        reviewText: ratingForm.reviewText
+      });
+      setSessionRating(saved);
+      
+      // Show success message
+      setSuccessMessage('✓ Rating submitted successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+      
+      // Notify expert to refresh their profile
+      const socket = getChatSocket();
+      socket.emit('expert_rating_update', {
+        expertId: selectedSession?.expert?.id,
+        sessionId: selectedSessionId
+      });
+      
+      // Refresh expert list to update ratings across app
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('expertRatingUpdated', {
+          detail: { expertId: selectedSession?.expert?.id }
+        }));
+      }, 500);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setRatingSubmitting(false);
+    }
+  }
+
   return (
     <section className="page-card session-layout">
       <div>
@@ -389,7 +563,12 @@ function SessionChatPage({ initialSessionId, currentUser }) {
               key={session.id}
               type="button"
               className={`session-item ${selectedSessionId === session.id ? 'active' : ''}`}
-              onClick={() => setSelectedSessionId(session.id)}
+              onClick={() => {
+                setSelectedSessionId(session.id);
+                if (typeof onSelectSession === 'function') {
+                  onSelectSession(session.id);
+                }
+              }}
             >
               <strong>
                 #{session.id} {session.doubt.title}
@@ -424,12 +603,26 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                 {selectedSession.status === 'requested' && currentUser?.role === 'expert' ? (
                   <p className="muted">The student requested a chat. Please review and respond.</p>
                 ) : null}
+                {selectedSession.status === 'accepted_pending' ? (
+                  <p className="muted">Request accepted. Chat will start when both student and expert are online.</p>
+                ) : null}
                 {selectedSession.status === 'declined' ? (
                   <p className="error-box session-inline-note">
                     {selectedSession.declineReason || 'This session request was declined because the expert is currently unavailable.'}
                   </p>
                 ) : null}
                 <p className="timer-display">⏱️ Elapsed: {formatSeconds(elapsedSeconds)}</p>
+                {sessionBilling ? (
+                  <div className="billing-box">
+                    <p className="muted">Billing Summary</p>
+                    <p className="muted">
+                      {sessionBilling.billableMinutes} min x Rs {Number(sessionBilling.ratePerMinute || 0).toFixed(2)}
+                      {' = '}Rs {Number(sessionBilling.amountDue || 0).toFixed(2)}
+                    </p>
+                    <p className="mini-id">{sessionBilling.status}</p>
+                    {sessionBilling.failureReason ? <p className="error-box">{sessionBilling.failureReason}</p> : null}
+                  </div>
+                ) : null}
                 <p className="typing-line">
                   {typingBySession[selectedSession.id]
                     ? `${typingBySession[selectedSession.id]} is typing...`
@@ -455,7 +648,9 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                   <span className="muted">
                     {selectedSession.status === 'requested'
                       ? 'Waiting for expert decision to start chat.'
-                      : 'This chat is closed.'}
+                      : selectedSession.status === 'accepted_pending'
+                        ? 'Expert accepted. Waiting for both participants to be online.'
+                        : 'This chat is closed.'}
                   </span>
                 )}
               </div>
@@ -496,11 +691,55 @@ function SessionChatPage({ initialSessionId, currentUser }) {
                     senderName: draft.senderName
                   });
                 }}
-                placeholder={chatIsActive ? 'Type your message' : 'Chat will be enabled when session is active'}
+                placeholder={chatIsActive ? 'Type your message' : 'Chat will be enabled when both users are online and session starts'}
                 required
               />
               <button type="submit" className="primary-btn" disabled={!chatIsActive}>Send Message</button>
             </form>
+
+            {currentUser?.role === 'student' && String(selectedSession.status || '').toLowerCase() === 'completed' ? (
+              <form onSubmit={onSubmitRating} className="rating-card">
+                <p className="label">Session Feedback</p>
+                <h3>Rate your expert</h3>
+                <p className="muted">Your rating helps improve expert quality for future students.</p>
+                {ratingLoading ? <p className="muted">Loading your rating...</p> : null}
+
+                <div className="rating-label">Rating</div>
+                <div className="star-rating">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      className={`star ${star <= ratingForm.rating ? 'filled' : ''}`}
+                      onClick={() => setRatingForm((prev) => ({ ...prev, rating: star }))}
+                      disabled={ratingSubmitting}
+                      title={`${star} star${star !== 1 ? 's' : ''}`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                <div className="rating-text">{['Poor', 'Needs Improvement', 'Good', 'Very Good', 'Excellent'][ratingForm.rating - 1]}</div>
+
+                <label>
+                  Review (optional)
+                  <textarea
+                    rows="3"
+                    maxLength={500}
+                    value={ratingForm.reviewText}
+                    onChange={(event) => setRatingForm((prev) => ({ ...prev, reviewText: event.target.value }))}
+                    disabled={ratingSubmitting}
+                    placeholder="Share your experience in a few words"
+                  />
+                </label>
+
+                {successMessage ? <p className="success-box">{successMessage}</p> : null}
+
+                <button type="submit" className="secondary-btn" disabled={ratingSubmitting}>
+                  {ratingSubmitting ? 'Saving rating...' : sessionRating?.id ? 'Update Rating' : 'Submit Rating'}
+                </button>
+              </form>
+            ) : null}
           </>
         )}
 

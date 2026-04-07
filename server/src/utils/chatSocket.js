@@ -25,6 +25,29 @@ function emitPresence(io, sessionId) {
   });
 }
 
+function getRoomParticipantSummary(io, sessionId) {
+  const room = toRoom(sessionId);
+  const roomSockets = io.sockets.adapter.rooms.get(room);
+  if (!roomSockets) {
+    return { onlineCount: 0, hasStudent: false, hasExpert: false };
+  }
+
+  let hasStudent = false;
+  let hasExpert = false;
+  for (const socketId of roomSockets) {
+    const peer = io.sockets.sockets.get(socketId);
+    const role = String(peer?.data?.senderRole || '').trim().toLowerCase();
+    if (role === 'student') hasStudent = true;
+    if (role === 'expert') hasExpert = true;
+  }
+
+  return {
+    onlineCount: roomSockets.size,
+    hasStudent,
+    hasExpert
+  };
+}
+
 export function initChatSocket(httpServer) {
   const allowedOrigins = [
     process.env.CLIENT_URL,
@@ -90,9 +113,8 @@ export function initChatSocket(httpServer) {
           });
         }
 
-        const roomSockets = io.sockets.adapter.rooms.get(toRoom(numericSessionId));
-        const onlineCount = roomSockets ? roomSockets.size : 0;
-        if (onlineCount > 1) {
+        const summary = getRoomParticipantSummary(io, numericSessionId);
+        if (summary.hasStudent && summary.hasExpert) {
           const updatedSession = await sessionService.scheduleSessionStart(numericSessionId);
           io.to(toRoom(numericSessionId)).emit('session_status_updated', {
             sessionId: numericSessionId,

@@ -68,6 +68,26 @@ export const expertController = {
     }
   },
 
+  async uploadMyAvatar(req, res, next) {
+    try {
+      if (!req.file) {
+        const error = new Error('Image file is required');
+        error.status = 400;
+        throw error;
+      }
+
+      const profileImageUrl = `${req.protocol}://${req.get('host')}/uploads/avatars/${req.file.filename}`;
+      const profile = await expertService.updateMyProfileImage(req.user.id, profileImageUrl);
+
+      res.json({
+        message: 'Profile image updated successfully',
+        data: profile
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getExpertProfile(req, res, next) {
     try {
       const { identifier } = req.params;

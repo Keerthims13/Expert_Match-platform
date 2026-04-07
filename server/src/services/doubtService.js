@@ -1,5 +1,6 @@
 import { doubtRepository } from '../repositories/doubtRepository.js';
 import { expertRepository } from '../repositories/expertRepository.js';
+import { sessionRepository } from '../repositories/sessionRepository.js';
 
 class BadRequestError extends Error {
   constructor(message) {
@@ -133,34 +134,63 @@ function normalizeName(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function getEffectiveStatus(doubt, sessionRow) {
+  const baseStatus = String(doubt?.status || '').trim().toLowerCase();
+  const sessionStatus = String(sessionRow?.status || '').trim().toLowerCase();
+
+  if (sessionStatus === 'requested') return 'requested';
+  if (sessionStatus === 'active') return 'in_chat';
+  if (sessionStatus === 'completed') return 'completed';
+  if (sessionStatus === 'declined') return 'declined';
+
+  if (doubt?.assignedExpertId) return 'assigned';
+  if (baseStatus === 'matched') return 'assigned';
+  return 'open';
+}
+
 export const doubtService = {
   async getDoubts(actor = null) {
     const doubts = await doubtRepository.findAll();
-    if (!actor) return doubts;
-
-    return doubts.filter((doubt) => {
+    const filtered = !actor
+      ? doubts
+      : doubts.filter((doubt) => {
       const ownerById = Number(doubt.requesterUserId) === Number(actor.id);
       const ownerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
       return ownerById || ownerByName;
+    });
+
+    const latestSessions = await sessionRepository.findLatestByDoubtIds(filtered.map((doubt) => doubt.id));
+    const sessionByDoubtId = new Map(latestSessions.map((row) => [Number(row.doubt_id), row]));
+
+    return filtered.map((doubt) => {
+      const latestSession = sessionByDoubtId.get(Number(doubt.id)) || null;
+      return {
+        ...doubt,
+        lifecycleTag: getEffectiveStatus(doubt, latestSession),
+        latestSessionStatus: latestSession ? String(latestSession.status || '').toLowerCase() : null,
+        latestSessionId: latestSession ? Number(latestSession.id) : null
+      };
     });
   },
 
   async assignExpert(doubtId, expertId, actor = null) {
     const numericDoubtId = Number(doubtId);
-    const numericExpertId = Number(expertId);
+    const numericExpertRef = Number(expertId);
 
     if (!Number.isInteger(numericDoubtId) || numericDoubtId <= 0) {
       throw new BadRequestError('doubtId must be a positive integer');
     }
 
-    if (!Number.isInteger(numericExpertId) || numericExpertId <= 0) {
+    if (!Number.isInteger(numericExpertRef) || numericExpertRef <= 0) {
       throw new BadRequestError('expertId must be a positive integer');
     }
 
-    const expert = await expertRepository.findById(numericExpertId);
+    // Accept either expert profile id or linked user id from client payloads.
+    const expert = await expertRepository.resolveByIdOrUserId(numericExpertRef);
     if (!expert) {
       throw new NotFoundError('Expert not found');
     }
+    const resolvedExpertId = Number(expert.id);
 
     const doubt = await doubtRepository.findById(numericDoubtId);
     if (!doubt) {
@@ -183,7 +213,7 @@ export const doubtService = {
       }
     }
 
-    const updated = await doubtRepository.assignExpert(numericDoubtId, numericExpertId);
+    const updated = await doubtRepository.assignExpert(numericDoubtId, resolvedExpertId);
     if (!updated) {
       throw new NotFoundError('Doubt not found');
     }

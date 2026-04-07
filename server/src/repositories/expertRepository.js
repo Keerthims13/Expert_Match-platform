@@ -2,6 +2,11 @@ import { getDbPool } from '../config/db.js';
 import { experts } from '../data/experts.js';
 
 function mapExpertRow(row, specialties, perks) {
+  const resolvedRating = row.computed_rating ?? row.rating;
+  const resolvedReviewCount = row.computed_review_count ?? row.review_count;
+  const resolvedConsultations = row.computed_consultations ?? row.consultations ?? 0;
+  const resolvedSuccessRate = row.computed_success_rate ?? row.success_rate ?? 0;
+  
   return {
     id: row.id,
     userId: row.user_id,
@@ -11,10 +16,10 @@ function mapExpertRow(row, specialties, perks) {
     headline: row.headline,
     category: row.category,
     experienceYears: row.experience_years,
-    rating: Number(row.rating),
-    reviewCount: row.review_count,
-    consultations: row.consultations,
-    successRate: row.success_rate,
+    rating: Number(resolvedRating),
+    reviewCount: Number(resolvedReviewCount) || 0,
+    consultations: Number(resolvedConsultations) || 0,
+    successRate: Number(resolvedSuccessRate) || 0,
     avgResponseMinutes: row.avg_response_minutes,
     solvedDoubts: row.solved_doubts,
     pricePerMinute: Number(row.price_per_minute),
@@ -27,6 +32,10 @@ function mapExpertRow(row, specialties, perks) {
     specialties,
     perks
   };
+}
+
+function isMissingSessionRatingsTable(error) {
+  return error?.code === 'ER_NO_SUCH_TABLE' && String(error?.sqlMessage || '').includes('session_ratings');
 }
 
 function groupValuesByExpertId(rows, keyName) {
@@ -43,10 +52,32 @@ function groupValuesByExpertId(rows, keyName) {
 async function findExpertFromDb(whereClause, value) {
   const pool = getDbPool();
 
-  const [rows] = await pool.query(
-    `SELECT * FROM experts WHERE ${whereClause} LIMIT 1`,
-    [value]
-  );
+  let rows;
+  try {
+    [rows] = await pool.query(
+      `
+        SELECT
+          e.*,
+          COALESCE(ROUND(AVG(sr.rating), 1), e.rating) AS computed_rating,
+          COALESCE(COUNT(sr.id), e.review_count) AS computed_review_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN s.status = 'completed' THEN s.id END), 0) AS computed_consultations,
+          COALESCE(ROUND(100.0 * SUM(CASE WHEN sr.rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(sr.id), 0), 0), 0) AS computed_success_rate
+        FROM experts e
+        LEFT JOIN session_ratings sr ON sr.expert_id = e.id
+        LEFT JOIN sessions s ON s.expert_id = e.id
+        WHERE ${whereClause}
+        GROUP BY e.id
+        LIMIT 1
+      `,
+      [value]
+    );
+  } catch (error) {
+    if (!isMissingSessionRatingsTable(error)) throw error;
+    [rows] = await pool.query(
+      `SELECT * FROM experts WHERE ${whereClause} LIMIT 1`,
+      [value]
+    );
+  }
 
   if (!rows.length) return null;
 
@@ -64,9 +95,60 @@ async function findExpertFromDb(whereClause, value) {
   );
 }
 
+async function resolveExpertByIdOrUserIdFromDb(identifier) {
+  const numeric = Number(identifier);
+  if (!Number.isInteger(numeric) || numeric <= 0) return null;
+
+  const pool = getDbPool();
+  const [rows] = await pool.query(
+    `
+      SELECT *
+      FROM experts
+      WHERE id = ? OR user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `,
+    [numeric, numeric, numeric]
+  );
+
+  if (!rows.length) return null;
+  const expert = rows[0];
+
+  const [[specialtyRows], [perkRows]] = await Promise.all([
+    pool.query('SELECT specialty FROM expert_specialties WHERE expert_id = ?', [expert.id]),
+    pool.query('SELECT perk FROM expert_perks WHERE expert_id = ?', [expert.id])
+  ]);
+
+  return mapExpertRow(
+    expert,
+    specialtyRows.map((row) => row.specialty),
+    perkRows.map((row) => row.perk)
+  );
+}
+
 async function findAllExpertsFromDb() {
   const pool = getDbPool();
-  const [expertRows] = await pool.query('SELECT * FROM experts ORDER BY created_at DESC, id DESC');
+  let expertRows;
+  try {
+    [expertRows] = await pool.query(
+      `
+        SELECT
+          e.*,
+          COALESCE(ROUND(AVG(sr.rating), 1), e.rating) AS computed_rating,
+          COALESCE(COUNT(sr.id), e.review_count) AS computed_review_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN s.status = 'completed' THEN s.id END), 0) AS computed_consultations,
+          COALESCE(ROUND(100.0 * SUM(CASE WHEN sr.rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(sr.id), 0), 0), 0) AS computed_success_rate
+        FROM experts e
+        LEFT JOIN session_ratings sr ON sr.expert_id = e.id
+        LEFT JOIN sessions s ON s.expert_id = e.id
+        GROUP BY e.id
+        ORDER BY e.created_at DESC, e.id DESC
+      `
+    );
+  } catch (error) {
+    if (!isMissingSessionRatingsTable(error)) throw error;
+    [expertRows] = await pool.query('SELECT * FROM experts ORDER BY created_at DESC, id DESC');
+  }
 
   if (!expertRows.length) {
     return [];
@@ -98,10 +180,31 @@ async function findExpertsByIdsFromDb(expertIds) {
 
   const pool = getDbPool();
   const placeholders = expertIds.map(() => '?').join(', ');
-  const [expertRows] = await pool.query(
-    `SELECT * FROM experts WHERE id IN (${placeholders})`,
-    expertIds
-  );
+  let expertRows;
+  try {
+    [expertRows] = await pool.query(
+      `
+        SELECT
+          e.*,
+          COALESCE(ROUND(AVG(sr.rating), 1), e.rating) AS computed_rating,
+          COALESCE(COUNT(sr.id), e.review_count) AS computed_review_count,
+          COALESCE(COUNT(DISTINCT CASE WHEN s.status = 'completed' THEN s.id END), 0) AS computed_consultations,
+          COALESCE(ROUND(100.0 * SUM(CASE WHEN sr.rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(sr.id), 0), 0), 0) AS computed_success_rate
+        FROM experts e
+        LEFT JOIN session_ratings sr ON sr.expert_id = e.id
+        LEFT JOIN sessions s ON s.expert_id = e.id
+        WHERE e.id IN (${placeholders})
+        GROUP BY e.id
+      `,
+      expertIds
+    );
+  } catch (error) {
+    if (!isMissingSessionRatingsTable(error)) throw error;
+    [expertRows] = await pool.query(
+      `SELECT * FROM experts WHERE id IN (${placeholders})`,
+      expertIds
+    );
+  }
 
   const [specialtyRows] = await pool.query(
     `SELECT expert_id, specialty FROM expert_specialties WHERE expert_id IN (${placeholders})`,
@@ -258,6 +361,17 @@ export const expertRepository = {
     );
   },
 
+  async resolveByIdOrUserId(identifier) {
+    return withFallback(
+      () => resolveExpertByIdOrUserIdFromDb(identifier),
+      () => {
+        const numeric = Number(identifier);
+        if (!Number.isInteger(numeric) || numeric <= 0) return null;
+        return experts.find((expert) => expert.id === numeric || expert.userId === numeric) || null;
+      }
+    );
+  },
+
   async updateAvailabilityByUserId(userId, availabilityStatus) {
     const pool = getDbPool();
     const [result] = await pool.query(
@@ -269,6 +383,22 @@ export const expertRepository = {
         WHERE user_id = ?
       `,
       [availabilityStatus, availabilityStatus === 'available' ? 1 : 0, Number(userId)]
+    );
+
+    if (!result.affectedRows) return null;
+    return this.findByUserId(userId);
+  },
+
+  async updateProfileImageByUserId(userId, profileImageUrl) {
+    const pool = getDbPool();
+    const [result] = await pool.query(
+      `
+        UPDATE experts
+        SET profile_image_url = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `,
+      [profileImageUrl, Number(userId)]
     );
 
     if (!result.affectedRows) return null;

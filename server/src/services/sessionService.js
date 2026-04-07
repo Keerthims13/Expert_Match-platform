@@ -1,6 +1,7 @@
 import { doubtRepository } from '../repositories/doubtRepository.js';
 import { expertRepository } from '../repositories/expertRepository.js';
 import { sessionRepository } from '../repositories/sessionRepository.js';
+import { walletService } from './walletService.js';
 
 class BadRequestError extends Error {
   constructor(message) {
@@ -104,13 +105,15 @@ export const sessionService = {
       throw new BadRequestError('Assigned expert is required before starting session');
     }
 
-    const expert = await expertRepository.findById(expertId);
+    const expert = await expertRepository.resolveByIdOrUserId(expertId);
     if (!expert) {
       throw new NotFoundError('Assigned expert not found');
     }
 
     if (!Number.isInteger(Number(expert.userId)) || Number(expert.userId) <= 0) {
-      throw new BadRequestError('Selected expert is currently unavailable for direct chat requests. Please choose an expert with an active account.');
+      const error = new Error('Selected expert has not set up their account properly. Please ask them to complete their expert profile setup before starting a chat.');
+      error.status = 400;
+      throw error;
     }
 
     if (actor && actor.role === 'student') {
@@ -174,7 +177,7 @@ export const sessionService = {
       throw new ForbiddenError('Forbidden: only assigned expert can respond to chat request');
     }
 
-    const nextStatus = normalizedDecision === 'accept' ? 'active' : 'declined';
+    const nextStatus = normalizedDecision === 'accept' ? 'accepted_pending' : 'declined';
     const updated = await sessionRepository.updateSessionStatus(sessionId, nextStatus);
     if (!updated) {
       throw new NotFoundError('Session not found');
@@ -213,6 +216,21 @@ export const sessionService = {
       throw new NotFoundError('Session not found');
     }
 
+    if (normalized === 'completed') {
+      try {
+        const billing = await walletService.settleSessionCharge(updated);
+        updated.billing = billing;
+      } catch (billingError) {
+        updated.billing = {
+          sessionId: updated.id,
+          status: 'failed',
+          amountDue: 0,
+          amountCharged: 0,
+          notes: billingError.message || 'Billing failed'
+        };
+      }
+    }
+
     return updated;
   },
 
@@ -228,6 +246,13 @@ export const sessionService = {
 
     if (session.status !== 'active') {
       throw new ForbiddenError('Chat is not active. Please wait for expert approval or start a new request.');
+    }
+
+    if (session.startedAt) {
+      const startAtMs = new Date(session.startedAt).getTime();
+      if (Number.isFinite(startAtMs) && Date.now() < startAtMs) {
+        throw new ForbiddenError('Chat will start in a few seconds once both participants are ready.');
+      }
     }
 
     const { senderRole, senderName } = normalizeParticipant(input);
@@ -321,10 +346,72 @@ export const sessionService = {
     if (!session) {
       throw new NotFoundError('Session not found');
     }
-    if (String(session.status || '').toLowerCase() !== 'active') {
+    const currentStatus = String(session.status || '').toLowerCase();
+    if (!['accepted_pending', 'active'].includes(currentStatus)) {
       return session;
     }
 
     return sessionRepository.scheduleSessionStart(sessionId);
+  },
+
+  async getSessionRating(id, actor = null) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    await this.getSessionById(sessionId, actor);
+    return sessionRepository.findSessionRating(sessionId);
+  },
+
+  async getSessionBilling(id, actor = null) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    const session = await this.getSessionById(sessionId, actor);
+    return walletService.getSessionBillingForUser(session, actor);
+  },
+
+  async submitSessionRating(id, input, actor = null) {
+    const sessionId = toPositiveInt(id, 'sessionId');
+    if (!actor) {
+      throw new ForbiddenError('Forbidden');
+    }
+
+    if (String(actor.role || '').toLowerCase() !== 'student') {
+      throw new ForbiddenError('Only students can submit session rating');
+    }
+
+    const session = await this.getSessionById(sessionId, actor);
+    if (String(session.status || '').toLowerCase() !== 'completed') {
+      throw new BadRequestError('Rating is allowed only after session is completed');
+    }
+
+    const rating = Number(input?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new BadRequestError('rating must be an integer between 1 and 5');
+    }
+
+    const reviewText = String(input?.reviewText || '').trim();
+    if (reviewText.length > 500) {
+      throw new BadRequestError('reviewText must be at most 500 characters');
+    }
+
+    return sessionRepository.upsertSessionRating({
+      sessionId,
+      expertId: session.expertId,
+      studentUserId: actor.id,
+      rating,
+      reviewText
+    });
+  },
+
+  async checkAndActivateSession(sessionId) {
+    const session = await this.getSessionById(sessionId);
+    
+    // Only try to activate if currently in accepted_pending state
+    if (String(session.status || '').toLowerCase() !== 'accepted_pending') {
+      return session;
+    }
+
+    // To avoid extra DB queries, we just activate it when requested
+    // In a real system, you'd check user presence from a separate tracking table
+    // For now, we activate on first presence check (when both have visited)
+    const activated = await sessionRepository.updateSessionStatus(sessionId, 'active', { startedAt: new Date() });
+    return activated;
   }
 };
