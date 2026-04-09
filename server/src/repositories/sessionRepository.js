@@ -26,7 +26,8 @@ function mapSessionRow(row) {
       id: row.expert_id,
       userId: row.expert_user_id || null,
       fullName: row.expert_name,
-      title: row.expert_title
+      title: row.expert_title,
+      pricePerMinute: Number(row.expert_price_per_minute || 0)
     }
   };
 }
@@ -86,7 +87,7 @@ export const sessionRepository = {
     const pool = getDbPool();
     const [rows] = await pool.query(
       `
-        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title
+        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title, e.price_per_minute AS expert_price_per_minute
         FROM sessions s
         JOIN doubts d ON d.id = s.doubt_id
         JOIN experts e ON e.id = s.expert_id
@@ -101,7 +102,7 @@ export const sessionRepository = {
     const pool = getDbPool();
     const [rows] = await pool.query(
       `
-        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title
+        SELECT s.*, d.title AS doubt_title, d.requester_name, d.requester_user_id, e.user_id AS expert_user_id, e.full_name AS expert_name, e.title AS expert_title, e.price_per_minute AS expert_price_per_minute
         FROM sessions s
         JOIN doubts d ON d.id = s.doubt_id
         JOIN experts e ON e.id = s.expert_id

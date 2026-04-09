@@ -11,6 +11,7 @@ import {
   updateSessionStatus
 } from '../services/sessionApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
+import { fetchMyWallet } from '../services/walletApi.js';
 
 const initialDraft = {
   senderRole: 'student',
@@ -62,6 +63,28 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   const [ratingForm, setRatingForm] = useState({ rating: 5, reviewText: '' });
   const [successMessage, setSuccessMessage] = useState('');
   const [sessionBilling, setSessionBilling] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(null);
+
+  function buildBillingConfirmation(billing, role) {
+    if (!billing) return '';
+
+    const amount = Number(billing.amountCharged || billing.amountDue || 0).toFixed(2);
+    const duration = Number(billing.durationSeconds || 0);
+    const minutes = Number(billing.billableMinutes || 0);
+
+    if (String(billing.status || '').toLowerCase() === 'paid') {
+      if (String(role || '').toLowerCase() === 'expert') {
+        return `Payment received: Rs ${amount} credited to your wallet for ${duration}s (${minutes} min billable).`;
+      }
+      return `Payment successful: Rs ${amount} deducted from your wallet and paid to the expert for ${duration}s (${minutes} min billable).`;
+    }
+
+    if (String(billing.status || '').toLowerCase() === 'insufficient_balance') {
+      return billing.notes || 'Payment failed: insufficient wallet balance.';
+    }
+
+    return billing.notes || 'Billing could not be completed for this session.';
+  }
 
   const selectedSession = useMemo(
     () => sessions.find((session) => toSessionId(session.id) === toSessionId(selectedSessionId)) || null,
@@ -76,9 +99,25 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
     return Date.now() >= startAtMs;
   }, [selectedSession?.status, selectedSession?.startedAt]);
 
+  const minimumWalletBalance = 100;
+  const estimatedBillableMinutes = useMemo(() => {
+    if (!chatIsActive || !selectedSession?.startedAt) return 0;
+    return elapsedSeconds > 0 ? Math.max(1, Math.ceil(elapsedSeconds / 60)) : 0;
+  }, [chatIsActive, elapsedSeconds, selectedSession?.startedAt]);
+  const estimatedCharge = useMemo(() => {
+    const rate = Number(selectedSession?.expert?.pricePerMinute || 0);
+    return Number((estimatedBillableMinutes * rate).toFixed(2));
+  }, [estimatedBillableMinutes, selectedSession?.expert?.pricePerMinute]);
+  const studentWalletBalance = Number(walletBalance ?? 0);
+  const walletAllowsChat = currentUser?.role !== 'student'
+    ? true
+    : walletBalance !== null
+      && studentWalletBalance >= minimumWalletBalance
+      && studentWalletBalance >= estimatedCharge;
+
   const canComposeMessage = useMemo(() => {
-    return chatIsActive;
-  }, [chatIsActive]);
+    return chatIsActive && walletAllowsChat;
+  }, [chatIsActive, walletAllowsChat]);
 
   const timerStartAt = useMemo(() => {
     if (!selectedSession) return null;
@@ -280,6 +319,35 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   useEffect(() => {
     loadUnreadCounts();
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'student') {
+      setWalletBalance(null);
+      return;
+    }
+
+    let active = true;
+
+    async function loadWallet() {
+      try {
+        const data = await fetchMyWallet();
+        if (!active) return;
+        setWalletBalance(Number(data?.wallet?.balance || 0));
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError.message);
+      }
+    }
+
+    loadWallet();
+
+    const interval = setInterval(loadWallet, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [currentUser?.id, currentUser?.role, selectedSessionId]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -536,6 +604,19 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
     try {
       const updated = await updateSessionStatus(selectedSessionId, status);
       setSessions((prev) => prev.map((session) => (session.id === updated.id ? updated : session)));
+
+      if (String(status || '').toLowerCase() === 'completed') {
+        const billing = updated?.billing || null;
+        if (billing) {
+          setSessionBilling(billing);
+          const confirmation = buildBillingConfirmation(billing, currentUser?.role);
+          if (confirmation) {
+            setSuccessMessage(confirmation);
+            setTimeout(() => setSuccessMessage(''), 6000);
+          }
+        }
+      }
+
       setError('');
     } catch (statusError) {
       setError(statusError.message);
@@ -640,6 +721,14 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
                     {selectedSession.declineReason || 'This session request was declined because the expert is currently unavailable.'}
                   </p>
                 ) : null}
+                {currentUser?.role === 'student' && chatIsActive ? (
+                  <p className={walletAllowsChat ? 'muted' : 'error-box session-inline-note'}>
+                    Wallet balance: Rs {studentWalletBalance.toFixed(2)}. Minimum Rs {minimumWalletBalance} is required to chat.
+                    {walletAllowsChat
+                      ? ` Estimated chat charge so far: Rs ${estimatedCharge.toFixed(2)}.`
+                      : ' Top up your wallet to continue. The session will stop when the available balance is exhausted.'}
+                  </p>
+                ) : null}
                 <p className="timer-display">⏱️ Elapsed: {formatSeconds(elapsedSeconds)}</p>
                 {sessionBilling ? (
                   <div className="billing-box">
@@ -649,7 +738,8 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
                       {' = '}Rs {Number(sessionBilling.amountDue || 0).toFixed(2)}
                     </p>
                     <p className="mini-id">{sessionBilling.status}</p>
-                    {sessionBilling.failureReason ? <p className="error-box">{sessionBilling.failureReason}</p> : null}
+                    <p className="muted">Charged: Rs {Number(sessionBilling.amountCharged || 0).toFixed(2)}</p>
+                    {sessionBilling.notes ? <p className="muted">{sessionBilling.notes}</p> : null}
                   </div>
                 ) : null}
                 <p className="typing-line">
@@ -720,7 +810,11 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
                     senderName: draft.senderName
                   });
                 }}
-                placeholder={canComposeMessage ? 'Type your message' : 'Chat starts only when both student and expert are online in this session'}
+                placeholder={canComposeMessage
+                  ? 'Type your message'
+                  : currentUser?.role === 'student' && walletBalance !== null && studentWalletBalance < minimumWalletBalance
+                    ? 'Top up your wallet to Rs 100 to continue chatting'
+                    : 'Chat starts only when both student and expert are online in this session'}
                 required
               />
               <button type="submit" className="primary-btn" disabled={!canComposeMessage}>Send Message</button>
@@ -772,6 +866,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
           </>
         )}
 
+        {successMessage ? <p className="success-box">{successMessage}</p> : null}
         {error ? <p className="error-box">{error}</p> : null}
       </div>
     </section>

@@ -20,6 +20,7 @@ class ForbiddenError extends Error {
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || '';
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+const MIN_CHAT_WALLET_BALANCE = 100;
 
 const razorpay = RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET
   ? new Razorpay({ key_id: RAZORPAY_KEY_ID, key_secret: RAZORPAY_KEY_SECRET })
@@ -36,11 +37,58 @@ function computeDurationSeconds(startedAt, endedAt) {
   return Math.floor((end - start) / 1000);
 }
 
+async function resolveSessionRatePerMinute(session) {
+  const sessionRate = Number(session?.expert?.pricePerMinute || 0);
+  if (Number.isFinite(sessionRate) && sessionRate > 0) {
+    return sessionRate;
+  }
+
+  const expert = await expertRepository.findById(session.expertId);
+  const expertRate = Number(expert?.pricePerMinute || 0);
+  return Number.isFinite(expertRate) && expertRate > 0 ? expertRate : 0;
+}
+
+async function buildSessionChargePreview(session, endedAt = Date.now()) {
+  const durationSeconds = computeDurationSeconds(session.startedAt, endedAt);
+  const billableMinutes = durationSeconds > 0 ? Math.max(1, Math.ceil(durationSeconds / 60)) : 0;
+  const ratePerMinute = toMoney(await resolveSessionRatePerMinute(session));
+  const amountDue = toMoney(billableMinutes * ratePerMinute);
+
+  return {
+    durationSeconds,
+    billableMinutes,
+    ratePerMinute,
+    amountDue
+  };
+}
+
+async function getWalletBalance(userId, connection = null) {
+  const wallet = await walletRepository.getWalletByUserId(userId, connection);
+  return Number(wallet?.balance || 0);
+}
+
 export const walletService = {
   getClientConfig() {
     return {
       keyId: RAZORPAY_KEY_ID || '',
       enabled: Boolean(razorpay)
+    };
+  },
+
+  getMinimumChatWalletBalance() {
+    return MIN_CHAT_WALLET_BALANCE;
+  },
+
+  async getSessionChatBudget(session, connection = null) {
+    const studentUserId = Number(session?.doubt?.requesterUserId || 0);
+    const balance = await getWalletBalance(studentUserId, connection);
+    const preview = await buildSessionChargePreview(session, Date.now());
+
+    return {
+      studentUserId,
+      balance,
+      minimumBalance: MIN_CHAT_WALLET_BALANCE,
+      ...preview
     };
   },
 
@@ -180,12 +228,8 @@ export const walletService = {
       throw new BadRequestError('session is required');
     }
 
-    const existing = await walletRepository.getSessionBillingBySessionId(session.id);
-    if (existing) return existing;
-
     const studentUserId = Number(session?.doubt?.requesterUserId || 0);
-    const expert = await expertRepository.findById(session.expertId);
-    const expertUserId = Number(expert?.userId || session?.expert?.userId || 0);
+    const expertUserId = Number(session?.expert?.userId || 0);
 
     if (!Number.isInteger(studentUserId) || studentUserId <= 0) {
       return {
@@ -207,10 +251,24 @@ export const walletService = {
       };
     }
 
-    const durationSeconds = computeDurationSeconds(session.startedAt, session.endedAt);
-    const billableMinutes = durationSeconds > 0 ? Math.max(1, Math.ceil(durationSeconds / 60)) : 0;
-    const ratePerMinute = toMoney(expert?.pricePerMinute || 0);
-    const amountDue = toMoney(billableMinutes * ratePerMinute);
+    const {
+      durationSeconds,
+      billableMinutes,
+      ratePerMinute,
+      amountDue
+    } = await buildSessionChargePreview(session, session.endedAt || Date.now());
+    const existing = await walletRepository.getSessionBillingBySessionId(session.id);
+
+    if (
+      existing
+      && Number(existing.amountDue || 0) === amountDue
+      && Number(existing.amountCharged || 0) === amountDue
+      && String(existing.status || '').toLowerCase() === 'paid'
+      && Number(existing.studentWalletTxnId || 0) > 0
+      && Number(existing.expertWalletTxnId || 0) > 0
+    ) {
+      return existing;
+    }
 
     const pool = getDbPool();
     const connection = await pool.getConnection();
@@ -221,24 +279,26 @@ export const walletService = {
       await walletRepository.ensureWallet(studentUserId, connection);
       await walletRepository.ensureWallet(expertUserId, connection);
 
+      const studentBalance = await getWalletBalance(studentUserId, connection);
+
       let status = 'paid';
-      let amountCharged = amountDue;
+      let amountCharged = Math.min(amountDue, studentBalance);
       let studentTxn = null;
       let expertTxn = null;
 
-      if (amountDue > 0) {
-        const debited = await walletRepository.debitWallet(connection, studentUserId, amountDue);
+      if (amountCharged > 0) {
+        const debited = await walletRepository.debitWallet(connection, studentUserId, amountCharged);
 
         if (!debited) {
           status = 'insufficient_balance';
           amountCharged = 0;
         } else {
-          await walletRepository.creditWallet(connection, expertUserId, amountDue);
+          await walletRepository.creditWallet(connection, expertUserId, amountCharged);
 
           studentTxn = await walletRepository.addWalletTransaction(connection, {
             userId: studentUserId,
             type: 'debit',
-            amount: amountDue,
+            amount: amountCharged,
             referenceType: 'session',
             referenceId: String(session.id),
             status: 'success',
@@ -248,7 +308,7 @@ export const walletService = {
           expertTxn = await walletRepository.addWalletTransaction(connection, {
             userId: expertUserId,
             type: 'credit',
-            amount: amountDue,
+            amount: amountCharged,
             referenceType: 'session',
             referenceId: String(session.id),
             status: 'success',
@@ -257,7 +317,11 @@ export const walletService = {
         }
       }
 
-      const billing = await walletRepository.createSessionBilling(connection, {
+      if (amountCharged < amountDue) {
+        status = 'insufficient_balance';
+      }
+
+      const billingPayload = {
         sessionId: session.id,
         studentUserId,
         expertUserId,
@@ -272,10 +336,14 @@ export const walletService = {
         notes: status === 'insufficient_balance'
           ? 'Wallet balance is insufficient. Please top up wallet to continue.'
           : 'Wallet billing completed successfully'
-      });
+      };
+
+      const updatedBilling = existing
+        ? await walletRepository.updateSessionBillingBySessionId(connection, billingPayload)
+        : await walletRepository.createSessionBilling(connection, billingPayload);
 
       await connection.commit();
-      return billing;
+      return updatedBilling;
     } catch (error) {
       await connection.rollback();
       throw error;
@@ -286,7 +354,12 @@ export const walletService = {
 
   async getSessionBillingForUser(session, actor) {
     const userId = Number(actor?.id || 0);
-    const sessionBilling = await walletRepository.getSessionBillingBySessionId(session.id);
+    let sessionBilling = await walletRepository.getSessionBillingBySessionId(session.id);
+
+    if (String(session?.status || '').toLowerCase() === 'completed' && (!sessionBilling || Number(sessionBilling.amountDue || 0) <= 0)) {
+      sessionBilling = await this.settleSessionCharge(session);
+    }
+
     if (!sessionBilling) return null;
 
     if (Number(sessionBilling.studentUserId) !== userId && Number(sessionBilling.expertUserId) !== userId) {

@@ -61,9 +61,9 @@ export const walletRepository = {
     return rows.length ? mapWalletRow(rows[0]) : null;
   },
 
-  async getWalletByUserId(userId) {
-    const pool = getDbPool();
-    const [rows] = await pool.query('SELECT * FROM wallets WHERE user_id = ? LIMIT 1', [Number(userId)]);
+  async getWalletByUserId(userId, connection = null) {
+    const db = connection || getDbPool();
+    const [rows] = await db.query('SELECT * FROM wallets WHERE user_id = ? LIMIT 1', [Number(userId)]);
     return rows.length ? mapWalletRow(rows[0]) : null;
   },
 
@@ -219,6 +219,44 @@ export const walletRepository = {
     );
 
     const [rows] = await connection.query('SELECT * FROM session_billings WHERE id = ? LIMIT 1', [result.insertId]);
+    return rows.length ? mapBillingRow(rows[0]) : null;
+  },
+
+  async updateSessionBillingBySessionId(connection, payload) {
+    await connection.query(
+      `
+        UPDATE session_billings
+        SET student_user_id = ?,
+            expert_user_id = ?,
+            duration_seconds = ?,
+            billable_minutes = ?,
+            rate_per_minute = ?,
+            amount_due = ?,
+            amount_charged = ?,
+            status = ?,
+            student_wallet_txn_id = ?,
+            expert_wallet_txn_id = ?,
+            notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ?
+      `,
+      [
+        Number(payload.studentUserId),
+        Number(payload.expertUserId),
+        Number(payload.durationSeconds || 0),
+        Number(payload.billableMinutes || 0),
+        Number(payload.ratePerMinute || 0),
+        Number(payload.amountDue || 0),
+        Number(payload.amountCharged || 0),
+        payload.status,
+        payload.studentWalletTxnId || null,
+        payload.expertWalletTxnId || null,
+        payload.notes || null,
+        Number(payload.sessionId)
+      ]
+    );
+
+    const [rows] = await connection.query('SELECT * FROM session_billings WHERE session_id = ? LIMIT 1', [Number(payload.sessionId)]);
     return rows.length ? mapBillingRow(rows[0]) : null;
   },
 

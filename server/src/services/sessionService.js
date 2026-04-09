@@ -248,6 +248,36 @@ export const sessionService = {
       throw new ForbiddenError('Chat is not active. Please wait for expert approval or start a new request.');
     }
 
+    const chatBudget = await walletService.getSessionChatBudget(session);
+    const minimumChatBalance = walletService.getMinimumChatWalletBalance();
+
+    if (chatBudget.balance < minimumChatBalance || chatBudget.amountDue > chatBudget.balance) {
+      const closedSession = await sessionRepository.updateSessionStatus(sessionId, 'completed', {
+        endedByRole: 'system',
+        endedByName: 'Wallet limit reached'
+      });
+
+      if (closedSession) {
+        try {
+          closedSession.billing = await walletService.settleSessionCharge(closedSession);
+        } catch (billingError) {
+          closedSession.billing = {
+            sessionId: closedSession.id,
+            status: 'failed',
+            amountDue: 0,
+            amountCharged: 0,
+            notes: billingError.message || 'Billing failed'
+          };
+        }
+      }
+
+      throw new BadRequestError(
+        chatBudget.balance < minimumChatBalance
+          ? 'Minimum wallet balance of Rs 100 is required to chat. Please top up your wallet.'
+          : 'Your wallet balance is not enough to continue this chat. The session has been closed and the available amount has been paid to the expert.'
+      );
+    }
+
     if (session.startedAt) {
       const startAtMs = new Date(session.startedAt).getTime();
       if (Number.isFinite(startAtMs) && Date.now() < startAtMs) {
@@ -349,6 +379,11 @@ export const sessionService = {
     const currentStatus = String(session.status || '').toLowerCase();
     if (!['accepted_pending', 'active'].includes(currentStatus)) {
       return session;
+    }
+
+    const chatBudget = await walletService.getSessionChatBudget(session);
+    if (chatBudget.balance < walletService.getMinimumChatWalletBalance()) {
+      throw new BadRequestError('Minimum wallet balance of Rs 100 is required to start chat. Please top up your wallet.');
     }
 
     return sessionRepository.scheduleSessionStart(sessionId);
