@@ -237,10 +237,6 @@ function App() {
 
       if (currentUser.role !== 'expert') return;
       pushToast(`New chat request for "${session?.doubt?.title || 'a doubt'}"`, 'info');
-      if (view !== 'sessions') {
-        setSelectedSessionId(sessionId);
-        navigateTo('sessions', { sessionId });
-      }
     }
 
     function onSessionRequestResponded(payload) {
@@ -250,11 +246,6 @@ function App() {
       if (currentUser.role === 'student') {
         if (decision === 'accept') {
           pushToast(`Your request for "${title}" was accepted by the expert.`, 'success');
-          const sessionId = Number(payload?.session?.id || payload?.sessionId);
-          if (sessionId && view !== 'sessions') {
-            setSelectedSessionId(sessionId);
-            navigateTo('sessions', { sessionId });
-          }
         } else if (decision === 'decline') {
           pushToast(`Your request for "${title}" was declined by the expert.`, 'error');
         }

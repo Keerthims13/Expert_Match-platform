@@ -6,6 +6,29 @@ function ExpertDetailsPage({ expertIdentifier, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Listen for expert rating updates
+  useEffect(() => {
+    function handleRatingUpdate(event) {
+      // If the current expert's rating was updated, refresh the details
+      if (event.detail?.expertId === expert?.id) {
+        const loadExpert = async () => {
+          try {
+            const profile = await fetchExpertProfile(expertIdentifier);
+            setExpert(profile);
+          } catch (err) {
+            console.error('Failed to refresh expert details:', err);
+          }
+        };
+        loadExpert();
+      }
+    }
+
+    window.addEventListener('expertRatingUpdated', handleRatingUpdate);
+    return () => {
+      window.removeEventListener('expertRatingUpdated', handleRatingUpdate);
+    };
+  }, [expert?.id, expertIdentifier]);
+
   useEffect(() => {
     let active = true;
 

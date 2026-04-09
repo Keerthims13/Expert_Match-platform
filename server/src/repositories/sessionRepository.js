@@ -193,6 +193,7 @@ export const sessionRepository = {
     const values = [normalized];
 
     if (normalized === 'active') {
+      const startedAt = options.startedAt ? new Date(options.startedAt) : new Date();
       setSql += `,
         accepted_at = COALESCE(accepted_at, CURRENT_TIMESTAMP),
         declined_at = NULL,
@@ -200,7 +201,8 @@ export const sessionRepository = {
         ended_at = NULL,
         ended_by_role = NULL,
         ended_by_name = NULL,
-        started_at = COALESCE(started_at, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND))`;
+        started_at = COALESCE(started_at, ?)`;
+      values.push(startedAt);
     }
 
     if (normalized === 'accepted_pending') {
@@ -243,7 +245,7 @@ export const sessionRepository = {
           `
             UPDATE sessions
             SET status = 'active',
-                started_at = NULL,
+                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
                 ended_at = NULL
             WHERE id = ?
           `,
@@ -278,24 +280,7 @@ export const sessionRepository = {
   },
 
   async scheduleSessionStart(id) {
-    const pool = getDbPool();
-    const [result] = await pool.query(
-      `
-        UPDATE sessions
-        SET status = 'active',
-            started_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND)
-        WHERE id = ?
-          AND status IN ('accepted_pending', 'active')
-          AND started_at IS NULL
-      `,
-      [id]
-    );
-
-    if (!result.affectedRows) {
-      return this.findSessionById(id);
-    }
-
-    return this.findSessionById(id);
+    return this.updateSessionStatus(id, 'active', { startedAt: new Date() });
   },
 
   async createMessage(payload) {

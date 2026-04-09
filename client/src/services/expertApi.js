@@ -44,3 +44,19 @@ export async function updateMyExpertAvailability(availabilityStatus) {
   );
   return payload.data;
 }
+
+export async function uploadMyExpertAvatar(file) {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const payload = await apiFetch(
+    '/api/experts/me/avatar',
+    {
+      method: 'PATCH',
+      body: formData
+    },
+    'Failed to upload expert image'
+  );
+
+  return payload.data;
+}

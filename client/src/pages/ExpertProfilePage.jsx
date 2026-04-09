@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { createExpertProfile, fetchMyExpertProfile, updateMyExpertAvailability } from '../services/expertApi.js';
+import {
+  createExpertProfile,
+  fetchMyExpertProfile,
+  updateMyExpertAvailability,
+  uploadMyExpertAvatar
+} from '../services/expertApi.js';
+import { uploadMyAvatar } from '../services/authApi.js';
 
 const initialForm = {
   fullName: '',
@@ -16,6 +22,15 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
   const [createdProfile, setCreatedProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [studentAvatarUrl, setStudentAvatarUrl] = useState('');
+
+  const fallbackAvatar =
+    'https://images.unsplash.com/photo-1544723795-3fb6469f5b39?auto=format&fit=crop&w=200&q=80';
+
+  useEffect(() => {
+    setStudentAvatarUrl(String(currentUser?.profileImageUrl || '').trim());
+  }, [currentUser?.profileImageUrl]);
 
   useEffect(() => {
     if (currentUser?.fullName) {
@@ -69,7 +84,8 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
         fullName: form.fullName,
         skills: form.skills,
         pricePerMinute: Number(form.pricePerMinute),
-        availabilityStatus: form.availabilityStatus
+        availabilityStatus: form.availabilityStatus,
+        profileImageUrl: String(currentUser?.profileImageUrl || '').trim()
       };
 
       const created = await createExpertProfile(payload);
@@ -81,6 +97,44 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
       setError(submitError.message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onUploadStudentAvatar(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setAvatarUploading(true);
+      setError('');
+      setSuccess('');
+      const updated = await uploadMyAvatar(file);
+      setStudentAvatarUrl(updated.profileImageUrl || '');
+      setSuccess('Profile image uploaded successfully.');
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setAvatarUploading(false);
+      event.target.value = '';
+    }
+  }
+
+  async function onUploadExpertAvatar(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setAvatarUploading(true);
+      setError('');
+      setSuccess('');
+      const updated = await uploadMyExpertAvatar(file);
+      setCreatedProfile(updated);
+      setSuccess('Expert profile image uploaded successfully.');
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setAvatarUploading(false);
+      event.target.value = '';
     }
   }
 
@@ -97,6 +151,26 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
 
         {currentUser?.role !== 'expert' ? (
           <div className="profile-form">
+            <div className="avatar-uploader">
+              <img
+                src={studentAvatarUrl || fallbackAvatar}
+                alt="Student profile"
+                className="profile-avatar"
+                onError={(event) => {
+                  event.currentTarget.src = fallbackAvatar;
+                }}
+              />
+              <label className="link-btn" style={{ textAlign: 'center' }}>
+                {avatarUploading ? 'Uploading...' : 'Upload Profile Image (Optional)'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={onUploadStudentAvatar}
+                  disabled={avatarUploading}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
             <p className="muted">Name: {currentUser?.fullName}</p>
             <p className="muted">Email: {currentUser?.email}</p>
             <p className="muted">Role: {currentUser?.role}</p>
@@ -165,6 +239,26 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
         {currentUser?.role === 'expert' && createdProfile ? (
           <div className="profile-form">
             <p className="muted">Profile already created. You can update your availability anytime.</p>
+            <div className="avatar-uploader">
+              <img
+                src={createdProfile.profileImageUrl || fallbackAvatar}
+                alt="Expert profile"
+                className="profile-avatar"
+                onError={(event) => {
+                  event.currentTarget.src = fallbackAvatar;
+                }}
+              />
+              <label className="link-btn" style={{ textAlign: 'center' }}>
+                {avatarUploading ? 'Uploading...' : 'Upload Profile Image (Optional)'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={onUploadExpertAvatar}
+                  disabled={avatarUploading}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
             <label>
               Availability
               <select
@@ -208,6 +302,14 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
           <p className="muted">No profile created in this session yet.</p>
         ) : (
           <>
+            <img
+              src={createdProfile.profileImageUrl || fallbackAvatar}
+              alt="Expert preview"
+              className="profile-avatar preview"
+              onError={(event) => {
+                event.currentTarget.src = fallbackAvatar;
+              }}
+            />
             <h2>{createdProfile.fullName}</h2>
             <p className="title">
               {createdProfile.availabilityStatus} | ${createdProfile.pricePerMinute}/min

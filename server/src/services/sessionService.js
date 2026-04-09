@@ -402,16 +402,6 @@ export const sessionService = {
 
   async checkAndActivateSession(sessionId) {
     const session = await this.getSessionById(sessionId);
-    
-    // Only try to activate if currently in accepted_pending state
-    if (String(session.status || '').toLowerCase() !== 'accepted_pending') {
-      return session;
-    }
-
-    // To avoid extra DB queries, we just activate it when requested
-    // In a real system, you'd check user presence from a separate tracking table
-    // For now, we activate on first presence check (when both have visited)
-    const activated = await sessionRepository.updateSessionStatus(sessionId, 'active', { startedAt: new Date() });
-    return activated;
+    return session;
   }
 };

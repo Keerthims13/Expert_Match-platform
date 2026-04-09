@@ -26,16 +26,39 @@ export async function fetchDoubtMatches(doubtId) {
 }
 
 export async function assignExpertToDoubt(doubtId, expertId) {
-  const payload = await apiFetch(
-    `/api/doubts/${doubtId}/assign`,
-    {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json'
+  const normalizedExpertId = Number(expertId);
+  let payload;
+  try {
+    payload = await apiFetch(
+      `/api/doubts/${doubtId}/assign`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          expertId: normalizedExpertId,
+          assignedToUserId: normalizedExpertId
+        })
       },
-      body: JSON.stringify({ expertId })
-    },
-    'Failed to assign expert'
-  );
+      'Failed to assign expert'
+    );
+  } catch (_error) {
+    payload = await apiFetch(
+      `/api/doubts/${doubtId}/assignments`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          expertId: normalizedExpertId,
+          assignedToUserId: normalizedExpertId
+        })
+      },
+      'Failed to assign expert'
+    );
+  }
+
   return payload.data;
 }

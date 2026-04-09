@@ -120,7 +120,7 @@ export const sessionController = {
 
   async respondToRequest(req, res, next) {
     try {
-      let session = await sessionService.respondToSessionRequest(req.params.id, req.body.decision, req.user);
+      const session = await sessionService.respondToSessionRequest(req.params.id, req.body.decision, req.user);
 
       const normalizedDecision = String(req.body.decision || '').trim().toLowerCase();
 
@@ -143,6 +143,7 @@ export const sessionController = {
       emitSessionLifecycleEvent(req, 'session_request_responded', session, req.user, {
         decision: req.body.decision
       });
+
       res.json({
         message: 'Session request response saved successfully',
         data: session

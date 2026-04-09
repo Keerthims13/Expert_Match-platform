@@ -8,8 +8,7 @@ import {
   markSessionRead,
   respondToSessionRequest,
   submitSessionRating,
-  updateSessionStatus,
-  checkAndActivateSession
+  updateSessionStatus
 } from '../services/sessionApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
 
@@ -18,6 +17,28 @@ const initialDraft = {
   senderName: 'Student',
   message: ''
 };
+
+function toSessionId(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function toTimeMs(value) {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    const dateMs = value.getTime();
+    return Number.isFinite(dateMs) ? dateMs : null;
+  }
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && String(value).trim() === String(numeric)) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   const [sessions, setSessions] = useState([]);
@@ -43,16 +64,29 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   const [sessionBilling, setSessionBilling] = useState(null);
 
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId) || null,
+    () => sessions.find((session) => toSessionId(session.id) === toSessionId(selectedSessionId)) || null,
     [sessions, selectedSessionId]
   );
   const chatIsActive = useMemo(() => {
-    if (String(selectedSession?.status || '').toLowerCase() !== 'active') return false;
+    const status = String(selectedSession?.status || '').toLowerCase();
+    if (status !== 'active') return false;
     if (!selectedSession?.startedAt) return false;
     const startAtMs = new Date(selectedSession.startedAt).getTime();
     if (!Number.isFinite(startAtMs)) return false;
     return Date.now() >= startAtMs;
   }, [selectedSession?.status, selectedSession?.startedAt]);
+
+  const canComposeMessage = useMemo(() => {
+    return chatIsActive;
+  }, [chatIsActive]);
+
+  const timerStartAt = useMemo(() => {
+    if (!selectedSession) return null;
+
+    const status = String(selectedSession.status || '').toLowerCase();
+    if (status !== 'active' && status !== 'completed') return null;
+    return toTimeMs(selectedSession.startedAt);
+  }, [selectedSession]);
 
   function isCurrentParticipant(senderRole, senderName) {
     return (
@@ -218,10 +252,10 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
       setSessions(data);
 
       if (!selectedSessionId && data.length) {
-        setSelectedSessionId(initialSessionId || data[0].id);
+        setSelectedSessionId(toSessionId(initialSessionId) || toSessionId(data[0].id));
       } else if (selectedSessionId && !data.some((item) => Number(item.id) === Number(selectedSessionId))) {
         // If selected session no longer exists, pick a pending/active one or the first one
-        setSelectedSessionId(data.length ? data[0].id : null);
+        setSelectedSessionId(data.length ? toSessionId(data[0].id) : null);
       }
     } catch (loadError) {
       setError(loadError.message);
@@ -288,7 +322,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
 
   useEffect(() => {
     if (!initialSessionId) return;
-    setSelectedSessionId(initialSessionId);
+    setSelectedSessionId(toSessionId(initialSessionId));
   }, [initialSessionId]);
 
   useEffect(() => {
@@ -317,21 +351,10 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
         if (active) setLoadingMessages(false);
       });
 
-    // Aggressive polling while a session is selected to catch status changes
     const aggressiveInterval = setInterval(async () => {
       if (!active || !selectedSessionId) return;
-      
-      try {
-        // Check if session needs to be activated (if both users are online)
-        if (selectedSession && String(selectedSession.status || '').toLowerCase() === 'accepted_pending') {
-          await checkAndActivateSession(selectedSessionId);
-        }
-      } catch (err) {
-        // Silently fail - will retry on next interval
-      }
-      
       loadSessions(false);
-    }, 500); // Check every 500ms while session is selected
+    }, 500);
 
     return () => {
       active = false;
@@ -436,24 +459,28 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   }, [selectedSessionId, selectedSession?.status]);
 
   useEffect(() => {
-    if (!selectedSession?.startedAt) {
+    if (!timerStartAt) {
       setElapsedSeconds(0);
       return;
     }
 
-    const interval = setInterval(() => {
-      const startTime = new Date(selectedSession.startedAt).getTime();
+    const tick = () => {
+      const startTime = Number(timerStartAt);
       const endTime = selectedSession.endedAt ? new Date(selectedSession.endedAt).getTime() : Date.now();
       const elapsed = Math.floor((endTime - startTime) / 1000);
       setElapsedSeconds(elapsed < 0 ? 0 : elapsed);
-    }, 1000);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
 
     return () => clearInterval(interval);
-  }, [selectedSession?.startedAt, selectedSession?.endedAt, selectedSession?.id]);
+  }, [timerStartAt, selectedSession?.endedAt, selectedSession?.id]);
 
   async function onSend(event) {
     event.preventDefault();
-    if (!selectedSessionId || !chatIsActive) return;
+    if (!selectedSessionId) return;
+    if (!chatIsActive) return;
 
     try {
       const socket = getChatSocket();
@@ -485,7 +512,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
       });
       setError('');
     } catch (sendError) {
-      setError(sendError.message);
+      setError(sendError.message || 'Failed to send message');
     }
   }
 
@@ -495,6 +522,8 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
     try {
       const updated = await respondToSessionRequest(selectedSessionId, decision);
       setSessions((prev) => prev.map((session) => (session.id === updated.id ? updated : session)));
+
+      loadSessions(false);
       setError('');
     } catch (respondError) {
       setError(respondError.message);
@@ -562,9 +591,9 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
             <button
               key={session.id}
               type="button"
-              className={`session-item ${selectedSessionId === session.id ? 'active' : ''}`}
+              className={`session-item ${toSessionId(selectedSessionId) === toSessionId(session.id) ? 'active' : ''}`}
               onClick={() => {
-                setSelectedSessionId(session.id);
+                setSelectedSessionId(toSessionId(session.id));
                 if (typeof onSelectSession === 'function') {
                   onSelectSession(session.id);
                 }
@@ -677,7 +706,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
               <textarea
                 rows="3"
                 value={draft.message}
-                disabled={!chatIsActive}
+                disabled={!canComposeMessage}
                 onChange={(event) => {
                   const value = event.target.value;
                   setDraft((prev) => ({ ...prev, message: value }));
@@ -691,10 +720,10 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
                     senderName: draft.senderName
                   });
                 }}
-                placeholder={chatIsActive ? 'Type your message' : 'Chat will be enabled when both users are online and session starts'}
+                placeholder={canComposeMessage ? 'Type your message' : 'Chat starts only when both student and expert are online in this session'}
                 required
               />
-              <button type="submit" className="primary-btn" disabled={!chatIsActive}>Send Message</button>
+              <button type="submit" className="primary-btn" disabled={!canComposeMessage}>Send Message</button>
             </form>
 
             {currentUser?.role === 'student' && String(selectedSession.status || '').toLowerCase() === 'completed' ? (

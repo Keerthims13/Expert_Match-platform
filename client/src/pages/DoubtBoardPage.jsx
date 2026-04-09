@@ -9,6 +9,16 @@ const initialForm = {
   category: 'Development'
 };
 
+function toLifecycleLabel(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'in_chat') return 'In Chat';
+  if (key === 'requested') return 'Requested';
+  if (key === 'assigned') return 'Assigned';
+  if (key === 'completed') return 'Completed';
+  if (key === 'declined') return 'Declined';
+  return 'Open';
+}
+
 function DoubtBoardPage({ onOpenSession, currentUser }) {
   const [form, setForm] = useState(initialForm);
   const [doubts, setDoubts] = useState([]);
@@ -17,6 +27,7 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [matchState, setMatchState] = useState({ doubtId: null, loading: false, error: '', data: null });
+  const [sessionStarting, setSessionStarting] = useState(null);
 
   async function loadDoubts() {
     try {
@@ -110,7 +121,9 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
           {doubts.map((doubt) => (
             <article key={doubt.id} className="doubt-card">
               <div className="directory-topline">
-                <span className="status-badge open">{doubt.status}</span>
+                <span className={`status-badge lifecycle-${String(doubt.lifecycleTag || 'open').toLowerCase()}`}>
+                  {toLifecycleLabel(doubt.lifecycleTag || doubt.status)}
+                </span>
                 <span className="mini-id">{doubt.category}</span>
               </div>
               <h3>{doubt.title}</h3>
@@ -119,6 +132,10 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                 <strong>{doubt.requesterName}</strong>
                 <span>{doubt.createdAtLabel}</span>
               </div>
+
+              {String(doubt.lifecycleTag || '').toLowerCase() === 'completed' && doubt.assignedExpert ? (
+                <p className="muted">Resolved with {doubt.assignedExpert.fullName}</p>
+              ) : null}
 
               <button
                 type="button"
@@ -203,7 +220,11 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                   <button
                     type="button"
                     className="secondary-btn"
+                    disabled={sessionStarting === doubt.id}
                     onClick={async () => {
+                      setSessionStarting(doubt.id);
+                      setError('');
+                      setSuccess('');
                       try {
                         const session = await createSession({ doubtId: doubt.id, expertId: doubt.assignedExpert.id });
                         if (session?._meta?.created || String(session?.status || '').toLowerCase() === 'requested') {
@@ -213,11 +234,13 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                         }
                         if (onOpenSession) onOpenSession(session);
                       } catch (sessionError) {
-                        setError(sessionError.message);
+                        setError(`Failed to start chat: ${sessionError.message}`);
+                      } finally {
+                        setSessionStarting(null);
                       }
                     }}
                   >
-                    Start Chat Request
+                    {sessionStarting === doubt.id ? 'Sending request...' : 'Start Chat Request'}
                   </button>
                 </div>
               ) : null}

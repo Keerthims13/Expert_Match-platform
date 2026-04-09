@@ -172,8 +172,24 @@ export function initChatSocket(httpServer) {
           throw new Error('sessionId must be a positive integer');
         }
 
-        const message = await sessionService.createMessage(numericSessionId, payload);
+        const currentSession = await sessionService.getSessionById(numericSessionId);
         const room = toRoom(numericSessionId);
+        const summary = getRoomParticipantSummary(io, numericSessionId);
+
+        if (
+          String(currentSession.status || '').toLowerCase() === 'accepted_pending'
+          && summary.hasStudent
+          && summary.hasExpert
+        ) {
+          const activatedSession = await sessionService.scheduleSessionStart(numericSessionId);
+          io.to(room).emit('session_status_updated', {
+            sessionId: numericSessionId,
+            session: activatedSession,
+            actor: null
+          });
+        }
+
+        const message = await sessionService.createMessage(numericSessionId, payload);
         io.to(room).emit('new_message', message);
 
         const roomSockets = io.sockets.adapter.rooms.get(room);
