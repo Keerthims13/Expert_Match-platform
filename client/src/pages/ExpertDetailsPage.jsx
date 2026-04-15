@@ -54,8 +54,8 @@ function ExpertDetailsPage({ expertIdentifier, onBack }) {
 
   return (
     <section className="page-card detail-shell">
-      <button type="button" className="link-btn" onClick={onBack}>
-        Back to list
+      <button type="button" className="link-btn" onClick={onBack} style={{ marginBottom: '1rem', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+        ← Back to list
       </button>
 
       {loading ? <p className="muted">Loading expert details...</p> : null}
@@ -71,7 +71,8 @@ function ExpertDetailsPage({ expertIdentifier, onBack }) {
 
             <div className="detail-panels">
               <section className="info-panel">
-                <h3>Skills</h3>
+                <p className="label">Skills & Expertise</p>
+                <h3>Specializations</h3>
                 <div className="chips compact">
                   {expert.specialties.map((skill) => (
                     <span key={skill}>{skill}</span>
@@ -80,7 +81,8 @@ function ExpertDetailsPage({ expertIdentifier, onBack }) {
               </section>
 
               <section className="info-panel">
-                <h3>About</h3>
+                <p className="label">Bio</p>
+                <h3>About this expert</h3>
                 <p>{expert.about || 'Profile summary will appear here as experts complete their details.'}</p>
               </section>
             </div>
@@ -88,14 +90,31 @@ function ExpertDetailsPage({ expertIdentifier, onBack }) {
 
           <aside className="detail-side">
             <div className="rate-box">
-              <p className="label">Pricing</p>
+              <p className="label">Session Rate</p>
               <strong>${expert.pricePerMinute}/min</strong>
+              <p className="subtitle" style={{ marginTop: '0.5rem' }}>Pay only for time spent</p>
             </div>
             <div className="stat-list">
-              <div><span>Status</span><strong>{expert.availabilityStatus}</strong></div>
-              <div><span>Consultations</span><strong>{expert.consultations}</strong></div>
-              <div><span>Reviews</span><strong>{expert.reviewCount}</strong></div>
-              <div><span>Success</span><strong>{expert.successRate}%</strong></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', padding: 'var(--space-3)', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-lg)' }}>
+                <div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Status</span>
+                  <strong style={{ display: 'block', marginTop: '0.25rem' }}>{expert.availabilityStatus}</strong>
+                </div>
+                <div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Reviews</span>
+                  <strong style={{ display: 'block', marginTop: '0.25rem' }}>{expert.reviewCount}</strong>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', padding: 'var(--space-3)', background: 'var(--color-bg-secondary)', borderRadius: 'var(--radius-lg)' }}>
+                <div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Sessions</span>
+                  <strong style={{ display: 'block', marginTop: '0.25rem' }}>{expert.consultations}</strong>
+                </div>
+                <div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Success Rate</span>
+                  <strong style={{ display: 'block', marginTop: '0.25rem' }}>{expert.successRate}%</strong>
+                </div>
+              </div>
             </div>
           </aside>
         </div>

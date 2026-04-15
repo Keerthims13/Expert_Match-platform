@@ -135,7 +135,7 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
       {success ? <p className="success-box">{success}</p> : null}
 
       {currentUser?.role === 'student' && assignableDoubts.length > 1 ? (
-        <label className="profile-form" style={{ marginTop: '0.75rem' }}>
+        <label className="profile-form directory-filter-form">
           Step 1: Choose your open doubt
           <select value={resolvedSelectedDoubtId} onChange={(event) => setSelectedDoubtId(event.target.value)}>
             {assignableDoubts.map((doubt) => (
@@ -155,13 +155,13 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
         <p className="muted">No open doubts to assign. Create a new doubt first from Post Doubts.</p>
       ) : null}
 
-      <label className="profile-form" style={{ marginTop: '0.65rem' }}>
-        Search experts
+      <label className="profile-form directory-search-form">
+        <span style={{ fontWeight: 700, display: 'block', marginBottom: '0.5rem' }}>🔍 Find your expert</span>
         <input
           type="text"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Search by name, skill, title or category"
+          placeholder="Search by name, skill, title or category..."
         />
       </label>
 

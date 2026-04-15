@@ -160,14 +160,14 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
                   event.currentTarget.src = fallbackAvatar;
                 }}
               />
-              <label className="link-btn" style={{ textAlign: 'center' }}>
+              <label className="link-btn upload-trigger-btn">
                 {avatarUploading ? 'Uploading...' : 'Upload Profile Image (Optional)'}
                 <input
                   type="file"
                   accept="image/*"
                   onChange={onUploadStudentAvatar}
                   disabled={avatarUploading}
-                  style={{ display: 'none' }}
+                  className="file-input-hidden"
                 />
               </label>
             </div>
@@ -248,14 +248,14 @@ function ExpertProfilePage({ onExploreExperts, currentUser, onProfileCreated }) 
                   event.currentTarget.src = fallbackAvatar;
                 }}
               />
-              <label className="link-btn" style={{ textAlign: 'center' }}>
+              <label className="link-btn upload-trigger-btn">
                 {avatarUploading ? 'Uploading...' : 'Upload Profile Image (Optional)'}
                 <input
                   type="file"
                   accept="image/*"
                   onChange={onUploadExpertAvatar}
                   disabled={avatarUploading}
-                  style={{ display: 'none' }}
+                  className="file-input-hidden"
                 />
               </label>
             </div>

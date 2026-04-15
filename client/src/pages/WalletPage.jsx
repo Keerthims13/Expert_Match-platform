@@ -130,33 +130,34 @@ function WalletPage({ currentUser }) {
   return (
     <section className="page-card wallet-layout">
       <div className="wallet-top">
-        <p className="label">Wallet</p>
-        <h1>Balance and Billing</h1>
-        <p className="subtitle">Top-up in Razorpay test mode and auto-pay completed sessions from wallet.</p>
+        <p className="label">💰 Wallet</p>
+        <h1>Balance & Billing</h1>
+        <p className="subtitle">Manage your funds, view transaction history, and track session costs.</p>
       </div>
 
       <div className="wallet-summary">
         <div className="wallet-balance-box">
-          <p className="muted">Available Balance</p>
-          <strong>Rs {hasBalance.toFixed(2)}</strong>
+          <p className="label">💵 Available Balance</p>
+          <strong>₹ {hasBalance.toFixed(2)}</strong>
+          <p className="subtitle" style={{ marginTop: 'var(--space-2)', marginBottom: 0 }}>Ready to use</p>
         </div>
 
         <div className="wallet-topup-box">
           <label>
-            Add Money
+            <span style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 700 }}>➕ Add Money</span>
             <input
               type="number"
               min="1"
               step="1"
               value={topupAmount}
               onChange={(event) => setTopupAmount(event.target.value)}
-              placeholder="Enter amount"
+              placeholder="Enter amount in ₹"
             />
           </label>
           <button type="button" className="primary-btn" onClick={onTopup} disabled={processing}>
-            {processing ? 'Processing...' : 'Add Money'}
+            {processing ? 'Processing...' : '💳 Add via Razorpay'}
           </button>
-          {!config?.enabled ? <p className="muted">Razorpay test mode is not configured yet.</p> : null}
+          {!config?.enabled ? <p className="muted">ℹ️ Razorpay test mode is not configured yet.</p> : null}
         </div>
       </div>
 
@@ -165,34 +166,36 @@ function WalletPage({ currentUser }) {
 
       <div className="wallet-grid">
         <div>
-          <p className="label">Wallet Transactions</p>
+          <p className="label">📊 Wallet Transactions</p>
           <div className="wallet-list">
             {transactions.length ? transactions.map((txn) => (
               <div key={txn.id} className="wallet-row">
                 <div>
-                  <strong>{txn.type === 'credit' ? '+' : '-'} Rs {Number(txn.amount || 0).toFixed(2)}</strong>
+                  <strong style={{ color: txn.type === 'credit' ? 'var(--color-success)' : 'var(--color-error)' }}>
+                    {txn.type === 'credit' ? '✓ +' : '✗ −'} ₹ {Number(txn.amount || 0).toFixed(2)}
+                  </strong>
                   <p className="muted">{txn.referenceType || 'wallet'} #{txn.referenceId || txn.id}</p>
                 </div>
-                <span className="mini-id">{txn.type}</span>
+                <span className="mini-id">{txn.type === 'credit' ? '📥' : '📤'}</span>
               </div>
-            )) : <p className="muted">No wallet transactions yet.</p>}
+            )) : <p className="muted">ℹ️ No wallet transactions yet.</p>}
           </div>
         </div>
 
         <div>
-          <p className="label">Session Billings</p>
+          <p className="label">🎯 Session Billings</p>
           <div className="wallet-list">
             {billings.length ? billings.map((bill) => (
               <div key={bill.id} className="wallet-row">
                 <div>
                   <strong>Session #{bill.sessionId}</strong>
                   <p className="muted">
-                    {bill.billableMinutes} min x Rs {Number(bill.ratePerMinute || 0).toFixed(2)} = Rs {Number(bill.amountDue || 0).toFixed(2)}
+                    {bill.billableMinutes} min × ₹{Number(bill.ratePerMinute || 0).toFixed(2)}/min = <strong>₹{Number(bill.amountDue || 0).toFixed(2)}</strong>
                   </p>
                 </div>
-                <span className="mini-id">{bill.status}</span>
+                <span className={`mini-id ${bill.status === 'paid' ? 'status-badge-paid' : ''}`}>{bill.status}</span>
               </div>
-            )) : <p className="muted">No session billings yet.</p>}
+            )) : <p className="muted">ℹ️ No session billings yet.</p>}
           </div>
         </div>
       </div>

@@ -129,88 +129,186 @@ function AuthPage({ onAuthenticated }) {
   }
 
   return (
-    <section className="page-card auth-shell">
-      <p className="label">Authentication</p>
-      <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
-      <p className="subtitle">Use this to access doubts and live sessions securely.</p>
+    <section className="auth-shell">
+      <div className="auth-layout">
+        <aside className="auth-brand-panel">
+          <p className="label">ExpertMatch</p>
+          <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          <p className="subtitle">Securely access doubts, live sessions, and your expert network in one place.</p>
+          <div className="auth-brand-pills" aria-hidden="true">
+            <span>AI matched experts</span>
+            <span>Live chat sessions</span>
+            <span>Trusted workflow</span>
+          </div>
+          
+          <div className="auth-brand-features">
+            <div className="auth-feature-item">
+              <span className="auth-feature-icon">✨</span>
+              <div>
+                <p className="auth-feature-title">Smart Matching</p>
+                <p className="auth-feature-desc">Get matched with the right experts instantly</p>
+              </div>
+            </div>
+            <div className="auth-feature-item">
+              <span className="auth-feature-icon">🎯</span>
+              <div>
+                <p className="auth-feature-title">Quality Assured</p>
+                <p className="auth-feature-desc">Verified experts with proven track records</p>
+              </div>
+            </div>
+            <div className="auth-feature-item">
+              <span className="auth-feature-icon">🚀</span>
+              <div>
+                <p className="auth-feature-title">Instant Solutions</p>
+                <p className="auth-feature-desc">Get help whenever you need it, 24/7</p>
+              </div>
+            </div>
+          </div>
 
-      <form onSubmit={onSubmit} className="profile-form">
-        {mode === 'register' ? (
-          <label>
-            Full Name
-            <input name="fullName" value={form.fullName} onChange={onChange} required />
-          </label>
-        ) : null}
+          <div className="auth-brand-stats">
+            <div className="auth-stat-box">
+              <p className="auth-stat-number">10K+</p>
+              <p className="auth-stat-label">Experts Online</p>
+            </div>
+            <div className="auth-stat-box">
+              <p className="auth-stat-number">95%</p>
+              <p className="auth-stat-label">Success Rate</p>
+            </div>
+            <div className="auth-stat-box">
+              <p className="auth-stat-number">&lt;2min</p>
+              <p className="auth-stat-label">Avg Response</p>
+            </div>
+          </div>
+        </aside>
 
-        {mode === 'register' ? (
-          <label>
-            Profile Image (optional)
-            <input name="image" type="file" accept="image/*" onChange={onImageChange} />
-            {imagePreview ? (
-              <img
-                src={imagePreview}
-                alt="Selected profile preview"
-                className="auth-image-preview"
-              />
-            ) : null}
-          </label>
-        ) : null}
+        <div className="page-card auth-form-panel">
+          {submitting ? (
+            <div className="auth-skeleton" aria-hidden="true">
+              <span className="auth-skeleton-line auth-skeleton-title" />
+              <span className="auth-skeleton-line auth-skeleton-subtitle" />
+              <span className="auth-skeleton-line auth-skeleton-input" />
+              <span className="auth-skeleton-line auth-skeleton-input" />
+              <span className="auth-skeleton-line auth-skeleton-button" />
+            </div>
+          ) : (
+            <>
+              <p className="label">Authentication</p>
+              <h2 className="auth-form-title">{mode === 'login' ? 'Sign in to continue' : 'Set up your account'}</h2>
+              <p className="subtitle">Use this to access doubts and live sessions securely.</p>
 
-        <label>
-          Email
-          <input name="email" type="email" value={form.email} onChange={onChange} required />
-        </label>
+              <form onSubmit={onSubmit} className="profile-form auth-form-grid">
+                {mode === 'register' ? (
+                  <label>
+                    Full Name
+                    <span className="input-shell">
+                      <span className="input-icon" aria-hidden="true">👤</span>
+                      <input name="fullName" value={form.fullName} onChange={onChange} required />
+                    </span>
+                  </label>
+                ) : null}
 
-        <label>
-          Password
-          <input name="password" type="password" value={form.password} onChange={onChange} required />
-        </label>
+                {mode === 'register' ? (
+                  <label>
+                    Profile Image (optional)
+                    <input name="image" type="file" accept="image/*" onChange={onImageChange} />
+                    {imagePreview ? (
+                      <img
+                        src={imagePreview}
+                        alt="Selected profile preview"
+                        className="auth-image-preview"
+                      />
+                    ) : null}
+                  </label>
+                ) : null}
 
-        {mode === 'register' ? (
-          <label>
-            Role
-            <select name="role" value={form.role} onChange={onChange}>
-              <option value="student">Student</option>
-              <option value="expert">Expert</option>
-            </select>
-          </label>
-        ) : null}
+                <label>
+                  Email
+                  <span className="input-shell">
+                    <span className="input-icon" aria-hidden="true">✉️</span>
+                    <input name="email" type="email" value={form.email} onChange={onChange} required />
+                  </span>
+                </label>
 
-        <button type="submit" className="primary-btn" disabled={submitting}>
-          {submitting ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
-        </button>
-      </form>
+                <label>
+                  Password
+                  <span className="input-shell">
+                    <span className="input-icon" aria-hidden="true">🔒</span>
+                    <input name="password" type="password" value={form.password} onChange={onChange} required />
+                  </span>
+                </label>
 
-      {googleClientId ? (
-        <div className="google-auth-block">
-          <p className="muted">or continue with Google</p>
-          <div id="google-signin-native" className="google-native-hidden" aria-hidden="true" />
-          <button
-            type="button"
-            className="google-icon-btn"
-            onClick={onGoogleSignInClick}
-            disabled={!googleReady || submitting}
-            aria-label="Continue with Google"
-            title="Continue with Google"
-          >
-            <span className="google-symbol">G</span>
-            <span>Continue with Google</span>
-          </button>
+                {mode === 'register' ? (
+                  <label>
+                    Role
+                    <span className="input-shell input-shell-select">
+                      <span className="input-icon" aria-hidden="true">🧭</span>
+                      <select name="role" value={form.role} onChange={onChange}>
+                        <option value="student">Student</option>
+                        <option value="expert">Expert</option>
+                      </select>
+                    </span>
+                  </label>
+                ) : null}
+
+                <button type="submit" className="primary-btn auth-submit-btn" disabled={submitting}>
+                  {submitting ? 'Please wait...' : mode === 'login' ? 'Login' : 'Create Account'}
+                </button>
+              </form>
+
+              {googleClientId ? (
+                <div className="google-auth-block">
+                  <p className="muted">or continue with Google</p>
+                  <div id="google-signin-native" className="google-native-hidden" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="google-icon-btn"
+                    onClick={onGoogleSignInClick}
+                    disabled={!googleReady || submitting}
+                    aria-label="Continue with Google"
+                    title="Continue with Google"
+                  >
+                    <span className="google-symbol">G</span>
+                    <span>Continue with Google</span>
+                  </button>
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                className="link-btn auth-mode-toggle"
+                onClick={() => {
+                  setMode((prev) => (prev === 'login' ? 'register' : 'login'));
+                  setError('');
+                }}
+              >
+                {mode === 'login' ? 'New user? Register here' : 'Already have an account? Login'}
+              </button>
+
+              {mode === 'login' ? (
+                <div className="auth-trust-section">
+                  <p className="auth-trust-label">Trusted by thousands of students</p>
+                  <div className="auth-trust-badges">
+                    <div className="auth-badge">
+                      <span className="auth-badge-icon">🔒</span>
+                      <p>Encrypted</p>
+                    </div>
+                    <div className="auth-badge">
+                      <span className="auth-badge-icon">✓</span>
+                      <p>Verified</p>
+                    </div>
+                    <div className="auth-badge">
+                      <span className="auth-badge-icon">⚡</span>
+                      <p>Instant</p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {error ? <p className="error-box">{error}</p> : null}
+            </>
+          )}
         </div>
-      ) : null}
-
-      <button
-        type="button"
-        className="link-btn"
-        onClick={() => {
-          setMode((prev) => (prev === 'login' ? 'register' : 'login'));
-          setError('');
-        }}
-      >
-        {mode === 'login' ? 'New user? Register here' : 'Already have an account? Login'}
-      </button>
-
-      {error ? <p className="error-box">{error}</p> : null}
+      </div>
     </section>
   );
 }

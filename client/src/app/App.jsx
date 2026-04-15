@@ -515,29 +515,12 @@ function App() {
         </button>
         <button
           type="button"
-          className={`nav-btn ${view === 'sessions' ? 'active' : ''}`}
+          className={`nav-btn nav-btn-with-badge ${view === 'sessions' ? 'active' : ''}`}
           onClick={() => navigateTo('sessions')}
-          style={{ position: 'relative' }}
         >
           Sessions Chat
           {currentUser?.role === 'expert' && pendingRequestCount > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: '8px',
-                right: '8px',
-                background: '#ff4444',
-                color: '#fff',
-                borderRadius: '50%',
-                width: '20px',
-                height: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 'bold'
-              }}
-            >
+            <span className="nav-badge">
               {pendingRequestCount}
             </span>
           )}

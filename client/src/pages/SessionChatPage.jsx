@@ -664,8 +664,8 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   return (
     <section className="page-card session-layout">
       <div>
-        <p className="label">Sessions</p>
-        <h1>Active consultations</h1>
+        <p className="label">🗂️ Sessions</p>
+        <h2>Active consultations</h2>
         {loadingSessions ? <p className="muted">Loading sessions...</p> : null}
         <div className="session-list">
           {sessions.map((session) => (
@@ -700,16 +700,16 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
       </div>
 
       <div>
-        <p className="label">Session Chat</p>
+        <p className="label">💬 Session Chat</p>
         {!selectedSession ? (
-          <p className="muted">Select a session from the left panel.</p>
+          <p className="muted">Select a session from the left to start chatting.</p>
         ) : (
           <>
             <div className="session-headline">
               <div>
                 <h2>{selectedSession.doubt.title}</h2>
-                <p className="muted">with {selectedSession.expert.fullName}</p>
-                <p className="muted">Status: {String(selectedSession.status || '').toUpperCase()}</p>
+                <p className="muted">with <strong>{selectedSession.expert.fullName}</strong></p>
+                <p className="muted">Status: <strong>{String(selectedSession.status || '').toUpperCase()}</strong></p>
                 {selectedSession.status === 'requested' && currentUser?.role === 'expert' ? (
                   <p className="muted">The student requested a chat. Please review and respond.</p>
                 ) : null}

@@ -82,18 +82,18 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
   return (
     <section className="page-card doubt-layout">
       <div>
-        <p className="label">Next Feature</p>
+        <p className="label">Create & Discuss</p>
         <h1>Post a new doubt</h1>
-        <p className="subtitle">Students and experts can post doubts. Students can assign experts and initiate chat requests.</p>
+        <p className="subtitle">Post questions about any topic. Students and experts can help each other grow.</p>
 
         <form className="profile-form" onSubmit={onSubmit}>
-          <p className="muted">Posting as: {currentUser?.fullName || form.requesterName || 'User'}</p>
+          <p className="muted">Posting as: <strong>{currentUser?.fullName || form.requesterName || 'User'}</strong></p>
           <label>
-            Doubt Title
-            <input name="title" value={form.title} onChange={onChange} required />
+            <span style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 700 }}>📝 Doubt Title</span>
+            <input name="title" value={form.title} onChange={onChange} placeholder="What's your question?" required />
           </label>
           <label>
-            Category
+            <span style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 700 }}>🏷️ Category</span>
             <select name="category" value={form.category} onChange={onChange}>
               <option>Development</option>
               <option>Data Science</option>
@@ -102,11 +102,11 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
             </select>
           </label>
           <label>
-            Description
-            <textarea name="description" value={form.description} onChange={onChange} rows="5" required />
+            <span style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 700 }}>✍️ Description</span>
+            <textarea name="description" value={form.description} onChange={onChange} rows="5" placeholder="Provide context and details..." required />
           </label>
           <button type="submit" className="primary-btn" disabled={submitting}>
-            {submitting ? 'Posting...' : 'Post Doubt'}
+            {submitting ? 'Posting...' : '📤 Post Doubt'}
           </button>
         </form>
 
@@ -115,7 +115,8 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
       </div>
 
       <div>
-        <p className="label">Recent Doubts</p>
+        <p className="label">Activity Feed</p>
+        <h2>Recent doubts</h2>
         {loading ? <p className="muted">Loading doubts...</p> : null}
         <div className="doubt-list">
           {doubts.map((doubt) => (
