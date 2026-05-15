@@ -183,5 +183,9 @@ export const expertService = {
     }
 
     return expertRepository.findById(createResult.expertId);
+  },
+
+  async searchExperts(filters) {
+    return expertRepository.findWithFilters(filters);
   }
 };

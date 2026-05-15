@@ -179,9 +179,11 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                             <strong>{expert.fullName}</strong>
                             <p className="muted">{expert.specialties.slice(0, 3).join(', ') || 'No skills listed'}</p>
                             <p className="muted">Status: {expert.availabilityStatus || 'offline'}</p>
+                            <p className="muted">
+                              ★ {Number(expert.rating || 0).toFixed(1)} ({expert.reviewCount || 0} reviews)
+                            </p>
                           </div>
                           <div className="match-actions">
-                            <span className="mini-id">Score {expert.matchScore}</span>
                             {currentUser?.role === 'student' ? (
                               <button
                                 type="button"
@@ -190,8 +192,13 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                                 onClick={async () => {
                                   try {
                                     setError('');
-                                    await assignExpertToDoubt(doubt.id, expert.id);
-                                    setSuccess(`Assigned ${expert.fullName} to doubt #${doubt.id}.`);
+                                    const result = await assignExpertToDoubt(doubt.id, expert.id);
+                                    const requestSent = Boolean(result?.requestCreated) || String(result?.session?.status || '').toLowerCase() === 'requested';
+                                    setSuccess(
+                                      requestSent
+                                        ? `Assigned ${expert.fullName} and sent chat request. Expert can accept or decline in Sessions.`
+                                        : `Assigned ${expert.fullName} to doubt #${doubt.id}.`
+                                    );
                                     await loadDoubts();
                                   } catch (assignError) {
                                     setError(assignError.message);
@@ -228,8 +235,8 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                       setSuccess('');
                       try {
                         const session = await createSession({ doubtId: doubt.id, expertId: doubt.assignedExpert.id });
-                        if (session?._meta?.created || String(session?.status || '').toLowerCase() === 'requested') {
-                          setSuccess(`Chat request sent to ${doubt.assignedExpert.fullName}. Waiting for expert confirmation.`);
+                        if (String(session?.status || '').toLowerCase() === 'requested') {
+                          setSuccess(`Request pending with ${doubt.assignedExpert.fullName}. Waiting for expert confirmation.`);
                         } else {
                           setSuccess(`Opened existing session #${session.id} for doubt #${doubt.id}.`);
                         }
@@ -241,7 +248,7 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
                       }
                     }}
                   >
-                    {sessionStarting === doubt.id ? 'Sending request...' : 'Start Chat Request'}
+                    {sessionStarting === doubt.id ? 'Opening...' : 'Open Session'}
                   </button>
                 </div>
               ) : null}

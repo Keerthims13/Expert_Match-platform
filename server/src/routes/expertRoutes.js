@@ -6,6 +6,7 @@ import { uploadAvatar } from '../middlewares/uploadMiddleware.js';
 const router = Router();
 
 router.get('/', expertController.getExpertList);
+router.get('/search/filter', expertController.searchExperts);
 router.get('/me', requireAuth, requireRole('expert'), expertController.getMyExpertProfile);
 router.patch('/me/availability', requireAuth, requireRole('expert'), expertController.updateMyAvailability);
 router.patch('/me/avatar', requireAuth, requireRole('expert'), uploadAvatar.single('image'), expertController.uploadMyAvatar);

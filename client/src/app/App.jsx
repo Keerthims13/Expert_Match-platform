@@ -6,11 +6,20 @@ import DoubtBoardPage from '../pages/DoubtBoardPage.jsx';
 import SessionChatPage from '../pages/SessionChatPage.jsx';
 import AuthPage from '../pages/AuthPage.jsx';
 import WalletPage from '../pages/WalletPage.jsx';
+import FavoritesPage from '../pages/FavoritesPage.jsx';
+import NotificationHistoryPage from '../pages/NotificationHistoryPage.jsx';
+import BellIcon from '../components/BellIcon.jsx';
 import { fetchCurrentUser } from '../services/authApi.js';
 import { getAuthToken, setAuthToken } from '../services/httpClient.js';
 import { fetchMyExpertProfile } from '../services/expertApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
 import { fetchSessions } from '../services/sessionApi.js';
+import {
+  fetchUnreadNotifications,
+  fetchUnreadCount,
+  markNotificationAsRead,
+  markAllNotificationsAsRead
+} from '../services/notificationApi.js';
 
 function parsePath(pathname) {
   const cleanPath = String(pathname || '/').replace(/\/+$/, '') || '/';
@@ -19,8 +28,10 @@ function parsePath(pathname) {
   if (cleanPath === '/profile') return { view: 'profile' };
   if (cleanPath === '/experts') return { view: 'list' };
   if (cleanPath === '/doubts') return { view: 'doubts' };
+  if (cleanPath === '/favorites') return { view: 'favorites' };
   if (cleanPath === '/sessions') return { view: 'sessions' };
   if (cleanPath === '/wallet') return { view: 'wallet' };
+  if (cleanPath === '/notifications') return { view: 'notifications-history' };
 
   const expertMatch = cleanPath.match(/^\/experts\/([^/]+)$/);
   if (expertMatch) {
@@ -46,7 +57,9 @@ function pathForView(view, options = {}) {
   if (view === 'profile') return '/profile';
   if (view === 'list') return '/experts';
   if (view === 'doubts') return '/doubts';
+  if (view === 'favorites') return '/favorites';
   if (view === 'wallet') return '/wallet';
+  if (view === 'notifications-history') return '/notifications';
   if (view === 'sessions') {
     const sessionId = Number(options.sessionId);
     return Number.isInteger(sessionId) && sessionId > 0 ? `/sessions/${sessionId}` : '/sessions';
@@ -68,6 +81,8 @@ function App() {
   const [expertProfileReady, setExpertProfileReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   function pushToast(message, tone = 'info') {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -87,7 +102,8 @@ function App() {
 
   function navigateTo(nextView, options = {}) {
     const resolvedExpertIdentifier = options.expertIdentifier || detailIdentifier;
-    const resolvedSessionId = options.sessionId || selectedSessionId;
+    const hasSessionId = Object.prototype.hasOwnProperty.call(options, 'sessionId');
+    const resolvedSessionId = hasSessionId ? options.sessionId : null;
 
     if (nextView === 'detail') {
       if (resolvedExpertIdentifier) {
@@ -95,8 +111,8 @@ function App() {
       }
     }
 
-    if (nextView === 'sessions' && resolvedSessionId) {
-      setSelectedSessionId(Number(resolvedSessionId));
+    if (nextView === 'sessions') {
+      setSelectedSessionId(hasSessionId && resolvedSessionId != null ? Number(resolvedSessionId) : null);
     }
 
     setView(nextView);
@@ -123,6 +139,8 @@ function App() {
 
     if (route.view === 'sessions' && route.sessionId) {
       setSelectedSessionId(route.sessionId);
+    } else if (route.view === 'sessions') {
+      setSelectedSessionId(null);
     }
 
     navigateTo(route.view, {
@@ -407,6 +425,49 @@ function App() {
     };
   }, [currentUser?.id]);
 
+  // Load notifications and listen for new ones
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    let active = true;
+
+    async function loadNotifications() {
+      try {
+        const [notificationsData, count] = await Promise.all([
+          fetchUnreadNotifications(20),
+          fetchUnreadCount()
+        ]);
+        if (!active) return;
+        setNotifications(notificationsData);
+        setUnreadCount(count);
+      } catch (_error) {
+        if (!active) return;
+      }
+    }
+
+    loadNotifications();
+    const interval = setInterval(loadNotifications, 10000);
+
+    const socket = getChatSocket();
+    function onNewNotification(notification) {
+      if (!active) return;
+      setNotifications((prev) => [notification, ...prev]);
+      setUnreadCount((prev) => prev + 1);
+      
+      // Show toast for new notification
+      const title = notification.title || 'New notification';
+      pushToast(title, 'info');
+    }
+
+    socket.on('new_notification', onNewNotification);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      socket.off('new_notification', onNewNotification);
+    };
+  }, [currentUser?.id]);
+
   function renderView() {
     if (view === 'list') {
       return (
@@ -443,6 +504,20 @@ function App() {
       );
     }
 
+    if (view === 'favorites') {
+      return (
+        <FavoritesPage
+          currentUser={currentUser}
+          onSelectExpert={(expert) => {
+            const identifier = expert?.slug || expert?.id;
+            setSelectedExpert(expert);
+            setDetailIdentifier(String(identifier || ''));
+            navigateTo('detail', { expertIdentifier: identifier });
+          }}
+        />
+      );
+    }
+
     if (view === 'sessions') {
       return (
         <SessionChatPage
@@ -460,6 +535,10 @@ function App() {
 
     if (view === 'wallet') {
       return <WalletPage currentUser={currentUser} />;
+    }
+
+    if (view === 'notifications-history') {
+      return <NotificationHistoryPage />;
     }
 
     return (
@@ -502,7 +581,32 @@ function App() {
         </div>
       ) : null}
       <aside className="app-sidebar">
-        <p className="brand-mark">ExpertMatch</p>
+        <div className="sidebar-header">
+          <p className="brand-mark">ExpertMatch</p>
+          <BellIcon
+            unreadCount={unreadCount}
+            notifications={notifications}
+            onNotificationRead={async (notificationId) => {
+              const success = await markNotificationAsRead(notificationId);
+              if (success) {
+                setNotifications(
+                  notifications.map((n) =>
+                    n.id === notificationId ? { ...n, isRead: true } : n
+                  )
+                );
+                setUnreadCount(Math.max(0, unreadCount - 1));
+              }
+            }}
+            onMarkAllAsRead={async () => {
+              const count = await markAllNotificationsAsRead();
+              if (count > 0) {
+                setNotifications(notifications.map((n) => ({ ...n, isRead: true })));
+                setUnreadCount(0);
+              }
+            }}
+            onViewAll={() => navigateTo('notifications-history')}
+          />
+        </div>
         <p className="muted">{currentUser.fullName} ({currentUser.role})</p>
         <button type="button" className={`nav-btn ${view === 'profile' ? 'active' : ''}`} onClick={() => navigateTo('profile')}>
           My Profile
@@ -512,6 +616,9 @@ function App() {
         </button>
         <button type="button" className={`nav-btn ${view === 'doubts' ? 'active' : ''}`} onClick={() => navigateTo('doubts')}>
           Post Doubts
+        </button>
+        <button type="button" className={`nav-btn ${view === 'favorites' ? 'active' : ''}`} onClick={() => navigateTo('favorites')}>
+          Favorites
         </button>
         <button
           type="button"
@@ -527,6 +634,9 @@ function App() {
         </button>
         <button type="button" className={`nav-btn ${view === 'wallet' ? 'active' : ''}`} onClick={() => navigateTo('wallet')}>
           Wallet
+        </button>
+        <button type="button" className={`nav-btn ${view === 'notifications-history' ? 'active' : ''}`} onClick={() => navigateTo('notifications-history')}>
+          📋 Notification History
         </button>
         <button
           type="button"

@@ -301,6 +301,9 @@ function AuthPage({ onAuthenticated }) {
                       <p>Instant</p>
                     </div>
                   </div>
+                  <a href="/admin/login" className="admin-portal-link">
+                    <span style={{ fontSize: '0.75rem', opacity: 0.6 }}>Admin Portal</span>
+                  </a>
                 </div>
               ) : null}
 

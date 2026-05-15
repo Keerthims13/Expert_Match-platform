@@ -10,6 +10,7 @@ import {
   submitSessionRating,
   updateSessionStatus
 } from '../services/sessionApi.js';
+import { submitReport } from '../services/reportApi.js';
 import { getChatSocket } from '../services/chatSocket.js';
 import { fetchMyWallet } from '../services/walletApi.js';
 
@@ -60,7 +61,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   const [ratingLoading, setRatingLoading] = useState(false);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [sessionRating, setSessionRating] = useState(null);
-  const [ratingForm, setRatingForm] = useState({ rating: 5, reviewText: '' });
+  const [ratingForm, setRatingForm] = useState({ rating: 0, reviewText: '' });
   const [successMessage, setSuccessMessage] = useState('');
   const [sessionBilling, setSessionBilling] = useState(null);
   const [walletBalance, setWalletBalance] = useState(null);
@@ -139,6 +140,29 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function getRatingLabel(value) {
+    const labels = ['Select a rating', 'Poor', 'Needs Improvement', 'Good', 'Very Good', 'Excellent'];
+    const normalized = Math.max(0, Math.min(5, Number(value) || 0));
+    return labels[normalized] || labels[0];
+  }
+
+  function renderRatingStars(value, readOnly = false) {
+    const normalized = Math.max(0, Math.min(5, Number(value) || 0));
+
+    return [1, 2, 3, 4, 5].map((star) => (
+      <button
+        key={star}
+        type="button"
+        className={`star ${star <= normalized ? 'filled' : ''} ${readOnly ? 'readonly' : ''}`}
+        onClick={readOnly ? undefined : () => setRatingForm((prev) => ({ ...prev, rating: star }))}
+        disabled={readOnly || ratingSubmitting || Boolean(sessionRating?.id)}
+        title={`${star} star${star !== 1 ? 's' : ''}`}
+      >
+        ★
+      </button>
+    ));
   }
 
   async function loadUnreadCounts() {
@@ -290,11 +314,8 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
       const data = await fetchSessions();
       setSessions(data);
 
-      if (!selectedSessionId && data.length) {
-        setSelectedSessionId(toSessionId(initialSessionId) || toSessionId(data[0].id));
-      } else if (selectedSessionId && !data.some((item) => Number(item.id) === Number(selectedSessionId))) {
-        // If selected session no longer exists, pick a pending/active one or the first one
-        setSelectedSessionId(data.length ? toSessionId(data[0].id) : null);
+      if (selectedSessionId && !data.some((item) => Number(item.id) === Number(selectedSessionId))) {
+        setSelectedSessionId(null);
       }
     } catch (loadError) {
       setError(loadError.message);
@@ -389,7 +410,6 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!initialSessionId) return;
     setSelectedSessionId(toSessionId(initialSessionId));
   }, [initialSessionId]);
 
@@ -462,7 +482,7 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
   }, [selectedSessionId, draft.senderName, draft.senderRole]);
 
   useEffect(() => {
-    if (!selectedSessionId || currentUser?.role !== 'student') {
+    if (!selectedSessionId) {
       setSessionRating(null);
       return;
     }
@@ -484,6 +504,8 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
             rating: Number(data.rating),
             reviewText: data.reviewText || ''
           });
+        } else {
+          setRatingForm({ rating: 0, reviewText: '' });
         }
       })
       .catch(() => {
@@ -661,6 +683,36 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
     }
   }
 
+  async function onReportParticipant() {
+    if (!selectedSession) return;
+
+    const reason = window.prompt('Describe the bad behavior (minimum 10 characters):', '');
+    if (reason === null) return;
+
+    try {
+      setError('');
+      setSuccessMessage('');
+
+      const payload = {
+        sessionId: selectedSession.id,
+        category: 'Unprofessional Behavior',
+        reason: String(reason || '').trim()
+      };
+
+      if (String(currentUser?.role || '').toLowerCase() === 'student') {
+        payload.reportedExpertId = selectedSession?.expert?.id;
+      } else {
+        payload.reportedUserId = selectedSession?.doubt?.requesterUserId;
+      }
+
+      await submitReport(payload);
+      setSuccessMessage('Report submitted. Admin will review and take action if needed.');
+      setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (reportError) {
+      setError(reportError.message || 'Failed to submit report');
+    }
+  }
+
   return (
     <section className="page-card session-layout">
       <div>
@@ -759,6 +811,9 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
                     </button>
                   </>
                 ) : null}
+                <button type="button" className="secondary-btn" onClick={onReportParticipant}>
+                  Report Bad Behavior
+                </button>
                 {selectedSession.status === 'active' ? (
                   <button type="button" className="secondary-btn" onClick={() => onStatusChange('completed')}>
                     End Chat
@@ -777,18 +832,37 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
 
             {loadingMessages ? <p className="muted">Loading messages...</p> : null}
             <div className="chat-box">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`chat-bubble ${msg.senderRole}`}>
-                  <strong>{msg.senderName}</strong>
-                  <p>{msg.message}</p>
-                  <span>
-                    {msg.createdAtLabel}
-                    {isCurrentParticipant(msg.senderRole, msg.senderName)
-                      ? ` • ${String(msg.messageStatus || 'sent').toUpperCase()}`
-                      : ''}
-                  </span>
-                </div>
-              ))}
+              {messages.length === 0 ? (
+                <p className="muted" style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+                  No messages yet. Start the conversation!
+                </p>
+              ) : null}
+              {messages.map((msg) => {
+                const isOwnMessage = isCurrentParticipant(msg.senderRole, msg.senderName);
+                const status = String(msg.messageStatus || 'sent').toLowerCase();
+                const isSeen = status === 'seen' || status === 'read';
+                const isSent = status === 'sent';
+
+                return (
+                  <div
+                    key={msg.id}
+                    className={`chat-bubble ${msg.senderRole} ${isOwnMessage ? 'own' : 'other'}`}
+                  >
+                    <div className="msg-content">
+                      {isOwnMessage ? null : <strong className="sender-name">{msg.senderName}</strong>}
+                      <p className="msg-text">{msg.message}</p>
+                    </div>
+                    <div className="msg-footer">
+                      <span className="msg-time">{msg.createdAtLabel}</span>
+                      {isOwnMessage ? (
+                        <span className={`msg-ticks ${isSeen ? 'seen' : isSent ? 'sent' : 'sending'}`}>
+                          {isSeen ? '✓✓' : isSent ? '✓' : '⏱'}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <form onSubmit={onSend} className="chat-form">
@@ -820,48 +894,73 @@ function SessionChatPage({ initialSessionId, currentUser, onSelectSession }) {
               <button type="submit" className="primary-btn" disabled={!canComposeMessage}>Send Message</button>
             </form>
 
-            {currentUser?.role === 'student' && String(selectedSession.status || '').toLowerCase() === 'completed' ? (
-              <form onSubmit={onSubmitRating} className="rating-card">
-                <p className="label">Session Feedback</p>
-                <h3>Rate your expert</h3>
-                <p className="muted">Your rating helps improve expert quality for future students.</p>
-                {ratingLoading ? <p className="muted">Loading your rating...</p> : null}
+            {String(selectedSession.status || '').toLowerCase() === 'completed' ? (
+              <div className="feedback-section">
+                {sessionRating?.id ? (
+                  <div className="feedback-card">
+                    <p className="label">Student Feedback</p>
+                    <h3>{currentUser?.role === 'expert' ? 'What the student said' : 'Your submitted feedback'}</h3>
+                    <div className="feedback-stars-row" aria-label={`Rating ${sessionRating.rating} out of 5`}>
+                      <div className="rating-stars">{renderRatingStars(sessionRating.rating, true)}</div>
+                      <span className="rating-count">{getRatingLabel(sessionRating.rating)}</span>
+                    </div>
+                    <p className="feedback-copy">
+                      {sessionRating.reviewText || 'No written feedback was provided.'}
+                    </p>
+                    <p className="muted feedback-meta-line">
+                      Submitted on {new Date(sessionRating.createdAt).toLocaleString('en-IN', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short'
+                      })}
+                    </p>
+                  </div>
+                ) : null}
 
-                <div className="rating-label">Rating</div>
-                <div className="star-rating">
-                  {[1, 2, 3, 4, 5].map((star) => (
+                {currentUser?.role === 'student' && !sessionRating?.id ? (
+                  <form onSubmit={onSubmitRating} className="rating-card">
+                    <p className="label">Session Feedback</p>
+                    <h3>Rate your expert</h3>
+                    <p className="muted">Your rating helps improve expert quality for future students.</p>
+                    {ratingLoading ? <p className="muted">Loading your rating...</p> : null}
+
+                    <div className="rating-label">Rating</div>
+                    <div className="star-rating">
+                      {renderRatingStars(ratingForm.rating)}
+                    </div>
+                    <div className="rating-text">{getRatingLabel(ratingForm.rating)}</div>
+
+                    <label>
+                      Review (optional)
+                      <textarea
+                        rows="3"
+                        maxLength={500}
+                        value={ratingForm.reviewText}
+                        onChange={(event) => setRatingForm((prev) => ({ ...prev, reviewText: event.target.value }))}
+                        disabled={ratingSubmitting || Boolean(sessionRating?.id)}
+                        placeholder="Share your experience in a few words"
+                      />
+                    </label>
+
+                    {successMessage ? <p className="success-box">{successMessage}</p> : null}
+
                     <button
-                      key={star}
-                      type="button"
-                      className={`star ${star <= ratingForm.rating ? 'filled' : ''}`}
-                      onClick={() => setRatingForm((prev) => ({ ...prev, rating: star }))}
-                      disabled={ratingSubmitting}
-                      title={`${star} star${star !== 1 ? 's' : ''}`}
+                      type="submit"
+                      className="secondary-btn"
+                      disabled={ratingSubmitting || Boolean(sessionRating?.id) || ratingForm.rating < 1}
                     >
-                      ★
+                      {ratingSubmitting ? 'Saving rating...' : sessionRating?.id ? '✓ Rating Submitted' : 'Submit Rating'}
                     </button>
-                  ))}
-                </div>
-                <div className="rating-text">{['Poor', 'Needs Improvement', 'Good', 'Very Good', 'Excellent'][ratingForm.rating - 1]}</div>
+                  </form>
+                ) : null}
 
-                <label>
-                  Review (optional)
-                  <textarea
-                    rows="3"
-                    maxLength={500}
-                    value={ratingForm.reviewText}
-                    onChange={(event) => setRatingForm((prev) => ({ ...prev, reviewText: event.target.value }))}
-                    disabled={ratingSubmitting}
-                    placeholder="Share your experience in a few words"
-                  />
-                </label>
-
-                {successMessage ? <p className="success-box">{successMessage}</p> : null}
-
-                <button type="submit" className="secondary-btn" disabled={ratingSubmitting}>
-                  {ratingSubmitting ? 'Saving rating...' : sessionRating?.id ? 'Update Rating' : 'Submit Rating'}
-                </button>
-              </form>
+                {!sessionRating?.id && currentUser?.role === 'expert' ? (
+                  <div className="feedback-card feedback-empty">
+                    <p className="label">Student Feedback</p>
+                    <h3>No feedback yet</h3>
+                    <p className="muted">Once the student submits a rating and review, it will appear here and in your notifications.</p>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </>
         )}

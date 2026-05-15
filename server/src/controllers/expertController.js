@@ -100,5 +100,28 @@ export const expertController = {
     } catch (error) {
       next(error);
     }
+  },
+
+  async searchExperts(req, res, next) {
+    try {
+      const filters = {
+        minRating: req.query.minRating ? Number(req.query.minRating) : undefined,
+        maxRating: req.query.maxRating ? Number(req.query.maxRating) : undefined,
+        minPrice: req.query.minPrice ? Number(req.query.minPrice) : undefined,
+        maxPrice: req.query.maxPrice ? Number(req.query.maxPrice) : undefined,
+        availability: req.query.availability,
+        category: req.query.category
+      };
+
+      const experts = await expertService.searchExperts(filters);
+
+      res.json({
+        message: 'Experts filtered successfully',
+        count: experts.length,
+        data: experts
+      });
+    } catch (error) {
+      next(error);
+    }
   }
 };

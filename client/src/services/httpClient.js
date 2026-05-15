@@ -27,12 +27,13 @@ export function setAuthToken(token) {
 }
 
 export async function parseResponse(response, fallbackMessage) {
+  const payload = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
     throw new Error(payload.message || fallbackMessage);
   }
 
-  return response.json();
+  return payload;
 }
 
 export async function apiFetch(path, options = {}, fallbackMessage = 'Request failed') {
@@ -47,7 +48,8 @@ export async function apiFetch(path, options = {}, fallbackMessage = 'Request fa
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers
+    headers,
+    credentials: 'include'
   });
 
   return parseResponse(response, fallbackMessage);

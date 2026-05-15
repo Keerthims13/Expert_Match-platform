@@ -2,6 +2,7 @@ import { doubtRepository } from '../repositories/doubtRepository.js';
 import { expertRepository } from '../repositories/expertRepository.js';
 import { sessionRepository } from '../repositories/sessionRepository.js';
 import { walletService } from './walletService.js';
+import notificationService from './notificationService.js';
 
 class BadRequestError extends Error {
   constructor(message) {
@@ -148,6 +149,30 @@ export const sessionService = {
       expertId,
       requestMessage: 'Student requested to start a chat session.'
     });
+
+    // Notify expert about the new session request
+    try {
+      if (expert.userId) {
+        await notificationService.createNotification(
+          Number(expert.userId),
+          'session_request',
+          'New Chat Request',
+          `${doubt.requesterName} requested a chat session for: "${doubt.title}"`,
+          {
+            relatedUserId: Number(doubt.requesterUserId),
+            sessionId: session.id,
+            doubtId: doubt.id,
+            data: {
+              doubtTitle: doubt.title,
+              studentName: doubt.requesterName
+            }
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.warn('Failed to create notification for session request:', notificationError.message);
+    }
+
     return {
       session,
       created: true
@@ -181,6 +206,46 @@ export const sessionService = {
     const updated = await sessionRepository.updateSessionStatus(sessionId, nextStatus);
     if (!updated) {
       throw new NotFoundError('Session not found');
+    }
+
+    // Notify student about the expert's response
+    try {
+      const studentUserId = Number(session.doubt.requesterUserId);
+      if (normalizedDecision === 'accept') {
+        await notificationService.createNotification(
+          studentUserId,
+          'session_accepted',
+          'Session Accepted!',
+          `${session.expert.fullName} accepted your chat request for: "${session.doubt.title}"`,
+          {
+            relatedUserId: Number(session.expert.userId),
+            sessionId: sessionId,
+            doubtId: session.doubt.id,
+            data: {
+              expertName: session.expert.fullName,
+              doubtTitle: session.doubt.title
+            }
+          }
+        );
+      } else {
+        await notificationService.createNotification(
+          studentUserId,
+          'session_rejected',
+          'Session Declined',
+          `${session.expert.fullName} declined your chat request for: "${session.doubt.title}"`,
+          {
+            relatedUserId: Number(session.expert.userId),
+            sessionId: sessionId,
+            doubtId: session.doubt.id,
+            data: {
+              expertName: session.expert.fullName,
+              doubtTitle: session.doubt.title
+            }
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.warn('Failed to create notification for session response:', notificationError.message);
     }
 
     return updated;
@@ -416,6 +481,12 @@ export const sessionService = {
       throw new BadRequestError('Rating is allowed only after session is completed');
     }
 
+    // Check if rating already exists
+    const existingRating = await sessionRepository.findSessionRating(sessionId);
+    if (existingRating && existingRating.id) {
+      throw new BadRequestError('Rating has already been submitted for this session and cannot be changed');
+    }
+
     const rating = Number(input?.rating);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
       throw new BadRequestError('rating must be an integer between 1 and 5');
@@ -426,13 +497,40 @@ export const sessionService = {
       throw new BadRequestError('reviewText must be at most 500 characters');
     }
 
-    return sessionRepository.upsertSessionRating({
+    const savedRating = await sessionRepository.upsertSessionRating({
       sessionId,
       expertId: session.expertId,
       studentUserId: actor.id,
       rating,
       reviewText
     });
+
+    try {
+      const expertUserId = Number(session.expert?.userId);
+      if (Number.isInteger(expertUserId) && expertUserId > 0) {
+        await notificationService.createNotification(
+          expertUserId,
+          'session_feedback',
+          'New Session Feedback',
+          `${actor.fullName} rated your session for "${session.doubt.title}" with ${rating} star${rating === 1 ? '' : 's'}.${reviewText ? `\nFeedback: ${reviewText}` : ''}`,
+          {
+            relatedUserId: Number(actor.id),
+            sessionId,
+            data: {
+              studentName: actor.fullName,
+              expertName: session.expert.fullName,
+              doubtTitle: session.doubt.title,
+              rating,
+              reviewText
+            }
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.warn('Failed to create notification for session feedback:', notificationError.message);
+    }
+
+    return savedRating;
   },
 
   async checkAndActivateSession(sessionId) {

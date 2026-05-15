@@ -49,6 +49,23 @@ function groupValuesByExpertId(rows, keyName) {
   }, {});
 }
 
+async function ensureBookmarkTableExists() {
+  const pool = getDbPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS expert_bookmarks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      expert_id INT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_bookmark (user_id, expert_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (expert_id) REFERENCES experts(id) ON DELETE CASCADE,
+      INDEX idx_user_id (user_id),
+      INDEX idx_expert_id (expert_id)
+    )
+  `);
+}
+
 async function findExpertFromDb(whereClause, value) {
   const pool = getDbPool();
 
@@ -528,5 +545,123 @@ export const expertRepository = {
     } finally {
       connection.release();
     }
+  },
+
+  async toggleBookmark(userId, expertId) {
+    await ensureBookmarkTableExists();
+
+    const pool = getDbPool();
+    const connection = await pool.getConnection();
+
+    try {
+      const [existing] = await connection.query(
+        'SELECT id FROM expert_bookmarks WHERE user_id = ? AND expert_id = ?',
+        [userId, expertId]
+      );
+
+      if (existing.length > 0) {
+        await connection.query(
+          'DELETE FROM expert_bookmarks WHERE user_id = ? AND expert_id = ?',
+          [userId, expertId]
+        );
+        return { bookmarked: false };
+      }
+
+      await connection.query(
+        'INSERT INTO expert_bookmarks (user_id, expert_id) VALUES (?, ?)',
+        [userId, expertId]
+      );
+      return { bookmarked: true };
+    } finally {
+      connection.release();
+    }
+  },
+
+  async isBookmarked(userId, expertId) {
+    await ensureBookmarkTableExists();
+
+    const pool = getDbPool();
+    const [rows] = await pool.query(
+      'SELECT id FROM expert_bookmarks WHERE user_id = ? AND expert_id = ?',
+      [userId, expertId]
+    );
+    return rows.length > 0;
+  },
+
+  async getUserBookmarks(userId) {
+    await ensureBookmarkTableExists();
+
+    const pool = getDbPool();
+    const [rows] = await pool.query(
+      `SELECT e.id, e.user_id, e.slug, e.full_name, e.title, e.headline, e.category,
+              e.experience_years, e.rating, e.review_count, e.price_per_minute,
+              e.availability_status, e.is_online, e.profile_image_url, e.about,
+              e.education, e.languages
+       FROM experts e
+       INNER JOIN expert_bookmarks eb ON e.id = eb.expert_id
+       WHERE eb.user_id = ?
+       ORDER BY eb.created_at DESC`,
+      [userId]
+    );
+
+    if (!rows.length) return [];
+
+    // Load specialties and perks
+    const expertIds = rows.map((row) => row.id);
+    const placeholders = expertIds.map(() => '?').join(',');
+
+    const [specialtyRows] = await pool.query(
+      `SELECT expert_id, specialty FROM expert_specialties WHERE expert_id IN (${placeholders})`,
+      expertIds
+    );
+
+    const [perkRows] = await pool.query(
+      `SELECT expert_id, perk FROM expert_perks WHERE expert_id IN (${placeholders})`,
+      expertIds
+    );
+
+    const specialtiesByExpertId = groupValuesByExpertId(specialtyRows, 'specialty');
+    const perksByExpertId = groupValuesByExpertId(perkRows, 'perk');
+
+    return rows.map((row) =>
+      mapExpertRow(row, specialtiesByExpertId[row.id] || [], perksByExpertId[row.id] || [])
+    );
+  },
+
+  async findWithFilters(filters = {}) {
+    const experts = await findAllExpertsFromDb();
+
+    return experts.filter((expert) => {
+      if (filters.minRating !== undefined && Number(expert.rating) < Number(filters.minRating)) {
+        return false;
+      }
+
+      if (filters.maxRating !== undefined && Number(filters.maxRating) < 5 && Number(expert.rating) > Number(filters.maxRating)) {
+        return false;
+      }
+
+      if (filters.minPrice !== undefined && Number(expert.pricePerMinute) < Number(filters.minPrice)) {
+        return false;
+      }
+
+      if (filters.maxPrice !== undefined && Number(expert.pricePerMinute) > Number(filters.maxPrice)) {
+        return false;
+      }
+
+      if (filters.availability && filters.availability !== 'all' && String(expert.availabilityStatus).toLowerCase() !== String(filters.availability).toLowerCase()) {
+        return false;
+      }
+
+      if (filters.category && filters.category !== 'all' && String(expert.category || '').toLowerCase() !== String(filters.category).toLowerCase()) {
+        return false;
+      }
+
+      return true;
+    });
+  },
+
+  async ensureBookmarkTable() {
+    await ensureBookmarkTableExists();
   }
 };
+

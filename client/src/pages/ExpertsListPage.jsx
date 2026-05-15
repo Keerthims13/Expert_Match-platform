@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchExpertList } from '../services/expertApi.js';
+import { fetchExpertList, searchExperts, toggleExpertBookmark, fetchUserBookmarks } from '../services/expertApi.js';
 import { assignExpertToDoubt, fetchDoubts } from '../services/doubtApi.js';
 
 const fallbackAvatar =
@@ -14,6 +14,15 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
   const [assigningId, setAssigningId] = useState(null);
   const [success, setSuccess] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [bookmarkedIds, setBookmarkedIds] = useState(new Set());
+  const [bookmarkingId, setBookmarkingId] = useState(null);
+
+  // Filter states
+  const [minRating, setMinRating] = useState(0);
+  const [maxPrice, setMaxPrice] = useState(500);
+  const [availability, setAvailability] = useState('all');
+  const [category, setCategory] = useState('all');
+  const [filtersApplied, setFiltersApplied] = useState(false);
 
   function renderRatingStars(rating) {
     const normalized = Math.max(0, Math.min(5, Number(rating) || 0));
@@ -31,48 +40,47 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
   }
 
   const filteredExperts = useMemo(() => {
+    let result = experts;
+
+    // Text search
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return experts;
+    if (query) {
+      result = result.filter((expert) => {
+        const haystack = [
+          expert.fullName,
+          expert.title,
+          expert.headline,
+          expert.category,
+          ...(expert.specialties || [])
+        ]
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(query);
+      });
+    }
 
-    return experts.filter((expert) => {
-      const haystack = [
-        expert.fullName,
-        expert.title,
-        expert.headline,
-        expert.category,
-        ...(expert.specialties || [])
-      ]
-        .join(' ')
-        .toLowerCase();
-
-      return haystack.includes(query);
-    });
+    return result;
   }, [experts, searchQuery]);
 
   const assignableDoubts = doubts.filter((doubt) => !doubt.assignedExpert);
   const resolvedSelectedDoubtId = selectedDoubtId || (assignableDoubts.length === 1 ? String(assignableDoubts[0].id) : '');
 
-  // Listen for expert rating updates
+  // Load user bookmarks
   useEffect(() => {
-    function handleRatingUpdate() {
-      // Refresh expert list when a rating is submitted
-      const loadExperts = async () => {
-        try {
-          const data = await fetchExpertList();
-          setExperts(data);
-        } catch (err) {
-          console.error('Failed to refresh experts:', err);
-        }
-      };
-      loadExperts();
-    }
+    if (!currentUser?.id) return;
+    
+    (async () => {
+      try {
+        const bookmarks = await fetchUserBookmarks();
+        const bookmarkSet = new Set(bookmarks.map(b => b.id));
+        setBookmarkedIds(bookmarkSet);
+      } catch (err) {
+        console.error('Failed to load bookmarks:', err);
+      }
+    })();
+  }, [currentUser?.id]);
 
-    window.addEventListener('expertRatingUpdated', handleRatingUpdate);
-    return () => {
-      window.removeEventListener('expertRatingUpdated', handleRatingUpdate);
-    };
-  }, []);
-
+  // Load experts initially
   useEffect(() => {
     let active = true;
 
@@ -81,6 +89,7 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
         const data = await fetchExpertList();
         if (!active) return;
         setExperts(data);
+        setFiltersApplied(false);
       } catch (loadError) {
         if (!active) return;
         setError(loadError.message);
@@ -96,6 +105,7 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
     };
   }, []);
 
+  // Load doubts
   useEffect(() => {
     let active = true;
 
@@ -119,6 +129,92 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
     };
   }, []);
 
+  // Listen for expert rating updates
+  useEffect(() => {
+    function handleRatingUpdate() {
+      const loadExperts = async () => {
+        try {
+          const data = filtersApplied ? await searchExperts({minRating, maxPrice, availability, category}) : await fetchExpertList();
+          setExperts(data);
+        } catch (err) {
+          console.error('Failed to refresh experts:', err);
+        }
+      };
+      loadExperts();
+    }
+
+    window.addEventListener('expertRatingUpdated', handleRatingUpdate);
+    return () => {
+      window.removeEventListener('expertRatingUpdated', handleRatingUpdate);
+    };
+  }, [filtersApplied, minRating, maxPrice, availability, category]);
+
+  async function handleApplyFilters() {
+    try {
+      setLoading(true);
+      setError('');
+      const data = await searchExperts({
+        minRating: minRating || undefined,
+        maxPrice: maxPrice || undefined,
+        availability: availability !== 'all' ? availability : undefined,
+        category: category !== 'all' ? category : undefined
+      });
+      setExperts(data);
+      setFiltersApplied(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleResetFilters() {
+    setMinRating(0);
+    setMaxPrice(500);
+    setAvailability('all');
+    setCategory('all');
+    setSearchQuery('');
+    setLoading(true);
+    setError('');
+    
+    (async () => {
+      try {
+        const data = await fetchExpertList();
+        setExperts(data);
+        setFiltersApplied(false);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }
+
+  async function handleToggleBookmark(expert) {
+    try {
+      setBookmarkingId(expert.id);
+      setError('');
+      const result = await toggleExpertBookmark(expert.id);
+      
+      if (result.bookmarked) {
+        setBookmarkedIds(prev => new Set([...prev, expert.id]));
+      } else {
+        setBookmarkedIds(prev => {
+          const updated = new Set(prev);
+          updated.delete(expert.id);
+          return updated;
+        });
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBookmarkingId(null);
+    }
+  }
+
+  const categories = ['all', 'JavaScript', 'Python', 'Data Science', 'UI/UX', 'DevOps'];
+  const availabilities = ['all', 'available', 'busy', 'offline'];
+
   return (
     <section className="page-card">
       <div className="page-header">
@@ -127,7 +223,7 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
           <h1>Browse all experts</h1>
           <p className="subtitle">Pick any expert you prefer. If you have one open doubt, assignment is one-click.</p>
         </div>
-        <div className="summary-pill">{experts.length} experts</div>
+        <div className="summary-pill">{filteredExperts.length} experts</div>
       </div>
 
       {loading ? <p className="muted">Loading experts...</p> : null}
@@ -165,6 +261,73 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
         />
       </label>
 
+      <div className="filters-section">
+        <div className="filters-grid">
+          <div className="filter-group">
+            <label>Minimum Rating</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="0.5"
+                value={minRating}
+                onChange={(e) => setMinRating(Number(e.target.value))}
+                style={{ flex: 1 }}
+              />
+              <span>{minRating}</span>
+            </div>
+          </div>
+
+          <div className="filter-group">
+            <label>Max Price ($/min)</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="range"
+                min="0"
+                max="500"
+                step="1"
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(Number(e.target.value))}
+                style={{ flex: 1 }}
+              />
+              <span>${maxPrice}</span>
+            </div>
+          </div>
+
+          <div className="filter-group">
+            <label>Availability</label>
+            <select value={availability} onChange={(e) => setAvailability(e.target.value)}>
+              {availabilities.map(avail => (
+                <option key={avail} value={avail}>
+                  {avail === 'all' ? 'All Statuses' : avail.charAt(0).toUpperCase() + avail.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="filter-group">
+            <label>Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              {categories.map(cat => (
+                <option key={cat} value={cat}>
+                  {cat === 'all' ? 'All Categories' : cat}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="filters-actions" style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+          <button className="primary-btn" onClick={handleApplyFilters} disabled={loading}>
+            {loading ? 'Applying...' : 'Apply Filters'}
+          </button>
+          <button className="secondary-btn" onClick={handleResetFilters} disabled={loading}>
+            Reset
+          </button>
+        </div>
+      </div>
+
       {!loading && !filteredExperts.length ? (
         <p className="muted">No experts match your search.</p>
       ) : null}
@@ -174,7 +337,16 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
           <article key={expert.id} className="directory-card">
             <div className="directory-card-head">
               <span className={`status-badge ${expert.availabilityStatus}`}>{expert.availabilityStatus}</span>
-              <span className="mini-id">#{expert.id}</span>
+              <button
+                type="button"
+                className={`bookmark-btn ${bookmarkedIds.has(expert.id) ? 'bookmarked' : ''}`}
+                onClick={() => handleToggleBookmark(expert)}
+                disabled={bookmarkingId === expert.id}
+                title={bookmarkedIds.has(expert.id) ? 'Remove bookmark' : 'Add bookmark'}
+                aria-label={bookmarkedIds.has(expert.id) ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                {bookmarkingId === expert.id ? '⏳' : bookmarkedIds.has(expert.id) ? '❤️' : '🤍'}
+              </button>
             </div>
 
             <div className="directory-avatar-wrap">
@@ -226,8 +398,13 @@ function ExpertsListPage({ onSelectExpert, currentUser }) {
                       setAssigningId(expert.id);
                       setError('');
                       setSuccess('');
-                      await assignExpertToDoubt(resolvedSelectedDoubtId, expert.id);
-                      setSuccess(`Assigned ${expert.fullName} to doubt #${resolvedSelectedDoubtId}.`);
+                      const result = await assignExpertToDoubt(resolvedSelectedDoubtId, expert.id);
+                      const requestSent = Boolean(result?.requestCreated) || String(result?.session?.status || '').toLowerCase() === 'requested';
+                      setSuccess(
+                        requestSent
+                          ? `Assigned ${expert.fullName} and sent chat request. Expert can accept or decline in Sessions.`
+                          : `Assigned ${expert.fullName} to doubt #${resolvedSelectedDoubtId}.`
+                      );
                     } catch (assignError) {
                       setError(assignError.message);
                     } finally {
