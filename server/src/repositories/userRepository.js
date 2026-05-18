@@ -8,6 +8,8 @@ function mapUserRow(row) {
 		role: row.role,
 		profileImageUrl: row.profile_image_url || '',
 		passwordHash: row.password_hash,
+		accountStatus: row.account_status || row.accountStatus || null,
+		accountDisabledReason: row.account_disabled_reason || row.accountDisabledReason || null,
 		createdAt: row.created_at
 	};
 }

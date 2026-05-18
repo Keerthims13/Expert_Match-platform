@@ -20,6 +20,19 @@ export async function createDoubt(data) {
   return payload.data;
 }
 
+export async function updateDoubt(doubtId, data) {
+  const payload = await apiFetch(
+    `/api/doubts/${doubtId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Failed to update doubt'
+  );
+  return payload.data;
+}
+
 export async function fetchDoubtMatches(doubtId) {
   const payload = await apiFetch(`/api/doubts/${doubtId}/matches`, {}, 'Failed to fetch expert matches');
   return payload.data;

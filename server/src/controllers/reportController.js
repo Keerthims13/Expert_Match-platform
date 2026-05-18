@@ -1,4 +1,7 @@
 import { getDbPool } from '../config/db.js';
+import notificationService from '../services/notificationService.js';
+
+const SUPPORT_CONTACT = process.env.SUPPORT_CONTACT || 'support@example.com';
 
 function asPositiveInt(value) {
   const numeric = Number(value);
@@ -199,6 +202,30 @@ export async function takeAdminReportAction(req, res) {
         'INSERT INTO audit_logs (adminId, action, entityType, entityId, details) VALUES (?, ?, ?, ?, ?)',
         [adminId, 'DISABLE_USER_FROM_REPORT', 'user', targetUserId, JSON.stringify({ reportId, reason: normalizedDisableReason })]
       );
+
+      // Notify the user and disconnect realtime sockets
+      try {
+        const io = req.app.get('io');
+        await notificationService.createNotification(
+          targetUserId,
+          'account_disabled',
+          'Account disabled',
+          `Your account has been disabled by an administrator following a report. Contact ${SUPPORT_CONTACT} to appeal.`,
+          {}
+        );
+        if (io) {
+          const room = `user:${targetUserId}`;
+          const roomSockets = io.sockets.adapter.rooms.get(room);
+          if (roomSockets) {
+            for (const socketId of roomSockets) {
+              const sock = io.sockets.sockets.get(socketId);
+              if (sock) try { sock.disconnect(true); } catch (_e) {}
+            }
+          }
+        }
+      } catch (_e) {
+        // best-effort
+      }
     }
 
     if (normalizedAction === 'disable_expert') {
@@ -227,6 +254,34 @@ export async function takeAdminReportAction(req, res) {
         'INSERT INTO audit_logs (adminId, action, entityType, entityId, details) VALUES (?, ?, ?, ?, ?)',
         [adminId, 'DISABLE_EXPERT_FROM_REPORT', 'expert', targetExpertId, JSON.stringify({ reportId, reason: normalizedDisableReason })]
       );
+
+      // Notify expert's user account and disconnect realtime sockets
+      try {
+        const [expertRows] = await connection.query('SELECT user_id FROM experts WHERE id = ? LIMIT 1', [targetExpertId]);
+        const targetUserId2 = expertRows?.[0]?.user_id ? Number(expertRows[0].user_id) : null;
+        const io = req.app.get('io');
+        if (targetUserId2) {
+          await notificationService.createNotification(
+            targetUserId2,
+            'account_disabled',
+            'Account disabled',
+            `Your expert account has been disabled by an administrator following a report. Contact ${SUPPORT_CONTACT} to appeal.`,
+            {}
+          );
+          if (io) {
+            const room = `user:${targetUserId2}`;
+            const roomSockets = io.sockets.adapter.rooms.get(room);
+            if (roomSockets) {
+              for (const socketId of roomSockets) {
+                const sock = io.sockets.sockets.get(socketId);
+                if (sock) try { sock.disconnect(true); } catch (_e) {}
+              }
+            }
+          }
+        }
+      } catch (_e) {
+        // best-effort
+      }
     }
 
     const finalStatus = normalizedAction === 'dismiss' ? 'dismissed' : 'action_taken';

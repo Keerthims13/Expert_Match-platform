@@ -1,5 +1,25 @@
 import { getDbPool } from '../config/db.js';
 import bcrypt from 'bcryptjs';
+import notificationService from '../services/notificationService.js';
+
+const SUPPORT_CONTACT = process.env.SUPPORT_CONTACT || 'support@example.com';
+
+function disconnectUserSockets(io, userId) {
+  try {
+    if (!io || !userId) return;
+    const room = `user:${userId}`;
+    const roomSockets = io.sockets.adapter.rooms.get(room);
+    if (!roomSockets) return;
+    for (const socketId of roomSockets) {
+      const sock = io.sockets.sockets.get(socketId);
+      if (sock) {
+        try { sock.disconnect(true); } catch (_e) { /* ignore */ }
+      }
+    }
+  } catch (_e) {
+    // best effort
+  }
+}
 
 // Admin Login
 export async function adminLogin(req, res) {
@@ -248,6 +268,21 @@ export async function disableUser(req, res) {
       [adminId, 'DISABLE_USER', 'user', userId, JSON.stringify({ reason })]
     );
 
+    // Notify the user and disconnect realtime sockets
+    try {
+      const io = req.app.get('io');
+      await notificationService.createNotification(
+        Number(userId),
+        'account_disabled',
+        'Account disabled',
+        `Your account has been disabled by an administrator. Contact ${SUPPORT_CONTACT} to appeal.`,
+        {}
+      );
+      disconnectUserSockets(io, Number(userId));
+    } catch (_err) {
+      // best-effort
+    }
+
     res.json({ message: 'User account disabled' });
   } catch (error) {
     console.error('Disable user error:', error);
@@ -298,6 +333,25 @@ export async function disableExpert(req, res) {
       'INSERT INTO audit_logs (adminId, action, entityType, entityId, details) VALUES (?, ?, ?, ?, ?)',
       [adminId, 'DISABLE_EXPERT', 'expert', expertId, JSON.stringify({ reason })]
     );
+
+    // Notify the expert's user account and disconnect realtime sockets
+    try {
+      const [rows] = await pool.query('SELECT user_id FROM experts WHERE id = ? LIMIT 1', [expertId]);
+      const targetUserId = rows?.[0]?.user_id ? Number(rows[0].user_id) : null;
+      const io = req.app.get('io');
+      if (targetUserId) {
+        await notificationService.createNotification(
+          targetUserId,
+          'account_disabled',
+          'Account disabled',
+          `Your expert account has been disabled by an administrator. Contact ${SUPPORT_CONTACT} to appeal.`,
+          {}
+        );
+        disconnectUserSockets(io, targetUserId);
+      }
+    } catch (_err) {
+      // best-effort
+    }
 
     res.json({ message: 'Expert account disabled' });
   } catch (error) {

@@ -95,6 +95,33 @@ export const doubtRepository = {
     return this.findById(doubtId);
   },
 
+  async updateById(doubtId, fields) {
+    const pool = getDbPool();
+    const sets = [];
+    const values = [];
+    if (fields.title !== undefined) {
+      sets.push('title = ?');
+      values.push(fields.title);
+    }
+    if (fields.description !== undefined) {
+      sets.push('description = ?');
+      values.push(fields.description);
+    }
+    if (fields.category !== undefined) {
+      sets.push('category = ?');
+      values.push(fields.category);
+    }
+
+    if (!sets.length) return this.findById(doubtId);
+
+    const sql = `UPDATE doubts SET ${sets.join(', ')} WHERE id = ?`;
+    values.push(Number(doubtId));
+
+    const [result] = await pool.query(sql, values);
+    if (!result.affectedRows) return null;
+    return this.findById(doubtId);
+  },
+
   async claimOwnershipIfMissing(doubtId, requesterUserId, requesterName) {
     const pool = getDbPool();
     const [result] = await pool.query(

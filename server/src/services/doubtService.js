@@ -1,6 +1,16 @@
 import { doubtRepository } from '../repositories/doubtRepository.js';
 import { expertRepository } from '../repositories/expertRepository.js';
 import { sessionRepository } from '../repositories/sessionRepository.js';
+import fuzzy from '../utils/fuzzy.js';
+import fs from 'fs';
+
+let SYNONYMS = {};
+try {
+  const p = new URL('../data/synonyms.json', import.meta.url);
+  SYNONYMS = JSON.parse(fs.readFileSync(p, 'utf8'));
+} catch (e) {
+  SYNONYMS = {};
+}
 
 class BadRequestError extends Error {
   constructor(message) {
@@ -17,6 +27,9 @@ class NotFoundError extends Error {
 }
 
 function extractKeywords(doubt, knownSpecialties) {
+  function escapeRegex(str) {
+    return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
   const text = `${doubt.title} ${doubt.description} ${doubt.category}`.toLowerCase();
   const normalizedText = ` ${text.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ')} `;
 
@@ -25,8 +38,13 @@ function extractKeywords(doubt, knownSpecialties) {
     .split(/\s+/)
     .map((word) => word.trim())
     .filter(Boolean);
+  // apply synonyms mapping so common typos map to canonical tokens (e.g. 'cld' -> 'cloud')
+  const mappedTokens = rawTokens.map((t) => {
+    const low = String(t || '').toLowerCase();
+    return (SYNONYMS[low] || low).toLowerCase();
+  });
 
-  const tokenSet = new Set(rawTokens);
+  const tokenSet = new Set(mappedTokens);
 
   const skillTokenSet = new Set(
     knownSpecialties
@@ -38,7 +56,15 @@ function extractKeywords(doubt, knownSpecialties) {
   const specialtyMatches = knownSpecialties
     .map((specialty) => String(specialty || '').trim().toLowerCase())
     .filter(Boolean)
-    .filter((specialty) => normalizedText.includes(` ${specialty} `) || normalizedText.includes(specialty))
+    .filter((specialty) => {
+      // prefer whole-word matches to avoid single-letter substring hits (e.g. 'c' matching 'cld')
+      try {
+        const re = new RegExp(`\\b${escapeRegex(specialty)}\\b`, 'i');
+        return re.test(normalizedText);
+      } catch (e) {
+        return normalizedText.includes(` ${specialty} `) || normalizedText.includes(specialty);
+      }
+    })
     .slice(0, 8);
 
   const stopWords = new Set([
@@ -117,6 +143,20 @@ function extractKeywords(doubt, knownSpecialties) {
 
   if (specialtyMatches.length) {
     return specialtyMatches;
+  }
+
+  // If no exact matches, attempt fuzzy matching against known specialties
+  try {
+    const specialtiesList = knownSpecialties
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    const fuzzyMatches = fuzzy.findFuzzyMatches([...tokenSet], specialtiesList, { threshold: 0.7, maxResults: 6 });
+    if (fuzzyMatches && fuzzyMatches.length) {
+      return fuzzyMatches.slice(0, 8);
+    }
+  } catch (_e) {
+    // ignore fuzzy errors and fall back
   }
 
   const keywords = text
@@ -273,6 +313,36 @@ export const doubtService = {
     return { id: numericId };
   },
 
+  async updateDoubt(id, fields = {}, actor = null) {
+    const numericId = Number(id);
+
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      throw new BadRequestError('id must be a positive integer');
+    }
+
+    const doubt = await doubtRepository.findById(numericId);
+    if (!doubt) throw new NotFoundError('Doubt not found');
+
+    if (actor && actor.role === 'student') {
+      const ownerById = Number(doubt.requesterUserId) === Number(actor.id);
+      const ownerByName = normalizeName(doubt.requesterName) === normalizeName(actor.fullName);
+      if (!ownerById && !ownerByName) {
+        const error = new Error('Forbidden: only doubt owner can update doubt');
+        error.status = 403;
+        throw error;
+      }
+    }
+
+    const allowed = {};
+    if (fields.title !== undefined) allowed.title = String(fields.title || '');
+    if (fields.description !== undefined) allowed.description = String(fields.description || '');
+    if (fields.category !== undefined) allowed.category = String(fields.category || '');
+
+    const updated = await doubtRepository.updateById(numericId, allowed);
+    if (!updated) throw new NotFoundError('Doubt not found');
+    return updated;
+  },
+
   async createDoubt(input) {
     const requesterName = String(input.requesterName || '').trim();
     const requesterUserId = input.requesterUserId ? Number(input.requesterUserId) : null;
@@ -296,6 +366,30 @@ export const doubtService = {
       throw new BadRequestError('category is required');
     }
 
-    return doubtRepository.create({ requesterUserId, requesterName, title, description, category });
+    // create the doubt record
+    const created = await doubtRepository.create({ requesterUserId, requesterName, title, description, category });
+
+    // build tokens for suggestion generation
+    try {
+      const specialties = await expertRepository.findAllSpecialties();
+      const specialtiesList = specialties.map((s) => String(s || '').trim().toLowerCase()).filter(Boolean);
+
+      const text = `${title} ${description} ${category}`.toLowerCase();
+      const normalized = text.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ');
+      const tokens = [...new Set(normalized.trim().split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2))];
+
+      // apply synonyms mapping
+      const mappedTokens = tokens.map((t) => {
+        const low = t.toLowerCase();
+        return (SYNONYMS[low] || low).toLowerCase();
+      });
+
+      const suggestions = fuzzy.findFuzzyMatches(mappedTokens, specialtiesList, { threshold: 0.7, maxResults: 6 });
+
+      return { doubt: created, suggestions: { specialties: suggestions } };
+    } catch (err) {
+      // on any suggestion error, return created doubt without suggestions
+      return { doubt: created, suggestions: { specialties: [] } };
+    }
   }
 };

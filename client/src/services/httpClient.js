@@ -30,7 +30,20 @@ export async function parseResponse(response, fallbackMessage) {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload.message || fallbackMessage);
+    const message = payload.message || fallbackMessage;
+    // If account is disabled, clear token, notify user and redirect to home/login
+    if (String(message || '').toLowerCase().includes('disabled')) {
+      try {
+        sessionStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+      } catch (_e) {}
+      // show server-provided message then redirect
+      try {
+        window.alert(message);
+        window.location.href = '/';
+      } catch (_e) {}
+    }
+    throw new Error(message);
   }
 
   return payload;

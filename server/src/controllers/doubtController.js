@@ -106,10 +106,10 @@ export const doubtController = {
         requesterName: req.user?.fullName,
         requesterUserId: req.user?.id
       };
-      const doubt = await doubtService.createDoubt(payload);
+      const result = await doubtService.createDoubt(payload);
       res.status(201).json({
         message: 'Doubt created successfully',
-        data: doubt
+        data: result
       });
     } catch (error) {
       next(error);
@@ -123,6 +123,17 @@ export const doubtController = {
         message: 'Doubt deleted successfully',
         data: result
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+  ,
+
+  async updateDoubt(req, res, next) {
+    try {
+      const payload = req.body || {};
+      const updated = await doubtService.updateDoubt(req.params.id, payload, req.user);
+      res.json({ message: 'Doubt updated successfully', data: updated });
     } catch (error) {
       next(error);
     }

@@ -1,105 +1,124 @@
 import { authService } from '../services/authService.js';
+import { getDbPool } from '../config/db.js';
 
-export const authController = {
-  async register(req, res, next) {
-    try {
-      const data = await authService.register(req.body);
-      res.status(201).json({
-        message: 'Registered successfully',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+export async function register(req, res, next) {
+	try {
+		const result = await authService.register(req.body || {});
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-  async registerWithAvatar(req, res, next) {
-    try {
-      const profileImageUrl = req.file
-        ? `${req.protocol}://${req.get('host')}/uploads/avatars/${req.file.filename}`
-        : '';
+export async function registerWithAvatar(req, res, next) {
+	try {
+		const payload = {
+			fullName: req.body.fullName || '',
+			email: req.body.email || '',
+			password: req.body.password || '',
+			role: req.body.role || 'student',
+			profileImageUrl: req.file ? `/uploads/avatars/${req.file.filename}` : ''
+		};
+		const result = await authService.register(payload);
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-      const payload = {
-        ...req.body,
-        profileImageUrl
-      };
+export async function login(req, res, next) {
+	try {
+		const result = await authService.login(req.body || {});
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-      const data = await authService.register(payload);
-      res.status(201).json({
-        message: 'Registered successfully',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+export async function loginWithGoogle(req, res, next) {
+	try {
+		const result = await authService.loginWithGoogle(req.body || {});
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-  async login(req, res, next) {
-    try {
-      const data = await authService.login(req.body);
-      res.json({
-        message: 'Login successful',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+export async function me(req, res, next) {
+	try {
+		const userId = req.user?.id;
+		if (!userId) {
+			const error = new Error('Unauthorized');
+			error.status = 401;
+			throw error;
+		}
+		const result = await authService.me(userId);
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-  async googleLogin(req, res, next) {
-    try {
-      const data = await authService.loginWithGoogle(req.body);
-      res.json({
-        message: 'Google login successful',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+export async function uploadMyAvatar(req, res, next) {
+	try {
+		const userId = req.user?.id;
+		if (!userId) {
+			const error = new Error('Unauthorized');
+			error.status = 401;
+			throw error;
+		}
 
-  async me(req, res, next) {
-    try {
-      const data = await authService.me(req.user.id);
-      res.json({
-        message: 'User fetched successfully',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+		if (!req.file) {
+			const error = new Error('No file uploaded');
+			error.status = 400;
+			throw error;
+		}
 
-  async listUsers(_req, res, next) {
-    try {
-      const data = await authService.listUsers();
-      res.json({
-        message: 'Users fetched successfully',
-        count: data.length,
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+		const profileImageUrl = `/uploads/avatars/${req.file.filename}`;
+		const result = await authService.updateMyProfileImage(userId, profileImageUrl);
+		res.json({ data: result });
+	} catch (err) {
+		next(err);
+	}
+}
 
-  async uploadMyAvatar(req, res, next) {
-    try {
-      if (!req.file) {
-        const error = new Error('Image file is required');
-        error.status = 400;
-        throw error;
-      }
+export async function completeOnboarding(req, res, next) {
+	try {
+		const userId = req.user?.id;
+		if (!userId) {
+			const error = new Error('Unauthorized');
+			error.status = 401;
+			throw error;
+		}
 
-      const profileImageUrl = `${req.protocol}://${req.get('host')}/uploads/avatars/${req.file.filename}`;
-      const data = await authService.updateMyProfileImage(req.user.id, profileImageUrl);
+		try {
+			const { userRepository } = await import('../repositories/userRepository.js');
+			if (typeof userRepository.markOnboardingComplete === 'function') {
+				const user = await userRepository.markOnboardingComplete(userId);
+				res.json({ data: { success: true, user } });
+				return;
+			}
+		} catch (_e) {
+			// ignore
+		}
 
-      res.json({
-        message: 'Profile image updated successfully',
-        data
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+		try {
+			const pool = getDbPool();
+			await pool.query('UPDATE users SET onboarding_completed = 1 WHERE id = ? LIMIT 1', [userId]);
+		} catch (_e) {}
+
+		res.json({ data: { success: true } });
+	} catch (err) {
+		next(err);
+	}
+}
+
+export default {
+	register,
+	registerWithAvatar,
+	login,
+	loginWithGoogle,
+	me,
+	uploadMyAvatar,
+	completeOnboarding
 };

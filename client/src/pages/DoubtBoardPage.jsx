@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { assignExpertToDoubt, createDoubt, fetchDoubtMatches, fetchDoubts } from '../services/doubtApi.js';
+import { assignExpertToDoubt, createDoubt, fetchDoubtMatches, fetchDoubts, updateDoubt } from '../services/doubtApi.js';
 import { createSession } from '../services/sessionApi.js';
 
 const initialForm = {
@@ -27,6 +27,8 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [matchState, setMatchState] = useState({ doubtId: null, loading: false, error: '', data: null });
+  const [suggestions, setSuggestions] = useState({ specialties: [] });
+  const [lastCreatedDoubtId, setLastCreatedDoubtId] = useState(null);
   const [sessionStarting, setSessionStarting] = useState(null);
 
   async function loadDoubts() {
@@ -65,17 +67,36 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
     setSuccess('');
 
     try {
-      await createDoubt({
+      const result = await createDoubt({
         ...form,
         requesterName: currentUser?.fullName || form.requesterName
       });
+
+      // server returns { doubt, suggestions }
+      const created = result?.doubt || result;
+      setLastCreatedDoubtId(created?.id || null);
+      const sugg = result?.suggestions || { specialties: [] };
+
       setSuccess('Doubt posted successfully.');
       setForm((prev) => ({ ...initialForm, requesterName: prev.requesterName || currentUser?.fullName || '' }));
+      setSuggestions(sugg);
       await loadDoubts();
     } catch (submitError) {
       setError(submitError.message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function applyCategorySuggestion(doubtId, suggestion) {
+    setError('');
+    try {
+      await updateDoubt(doubtId, { category: suggestion });
+      setSuccess(`Category updated to ${suggestion}`);
+      setSuggestions({ specialties: [] });
+      await loadDoubts();
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -110,6 +131,25 @@ function DoubtBoardPage({ onOpenSession, currentUser }) {
           </button>
         </form>
 
+        {suggestions?.specialties?.length ? (
+          <div style={{ marginTop: '1rem' }}>
+            <p className="label">Suggested specialties</p>
+            <div className="chips compact">
+              {suggestions.specialties.map((s) => (
+                <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span>{s}</span>
+                  <button
+                    type="button"
+                    className="small-btn"
+                    onClick={() => applyCategorySuggestion(lastCreatedDoubtId, s)}
+                  >
+                    Use as Category
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {error ? <p className="error-box">{error}</p> : null}
         {success ? <p className="success-box">{success}</p> : null}
       </div>

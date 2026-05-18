@@ -15,6 +15,7 @@ router.patch('/:id/assignments', requireRole('student'), (req, res, next) => {
 	return doubtController.assignExpert(req, res, next);
 });
 router.post('/', requireRole('student', 'expert'), doubtController.createDoubt);
+router.patch('/:id', requireRole('student'), doubtController.updateDoubt);
 router.post('/:id/sessions', requireRole('student'), (req, res, next) => {
 	req.body = {
 		...req.body,

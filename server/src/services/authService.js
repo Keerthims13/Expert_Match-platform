@@ -35,6 +35,7 @@ function sanitizeUser(user) {
 		fullName: user.fullName,
 		email: user.email,
 		role: user.role,
+		accountStatus: user.accountStatus || user.account_status || null,
 		profileImageUrl: user.profileImageUrl || ''
 	};
 }
@@ -107,6 +108,11 @@ export const authService = {
 		const isValid = await bcrypt.compare(password, user.passwordHash);
 		if (!isValid) throw new UnauthorizedError('Invalid email or password');
 
+		// Block disabled accounts
+		if (String(user.accountStatus || '').toLowerCase() === 'disabled' || String(user.account_status || '').toLowerCase() === 'disabled') {
+			throw new UnauthorizedError('Account disabled');
+		}
+
 		const token = signToken(user);
 		return {
 			token,
@@ -168,6 +174,11 @@ export const authService = {
 				passwordHash: null,
 				profileImageUrl: profileImageUrl || null
 			});
+		}
+
+		// Block disabled accounts
+		if (user && String(user.accountStatus || user.account_status || '').toLowerCase() === 'disabled') {
+			throw new UnauthorizedError('Account disabled');
 		}
 
 		const token = signToken(user);

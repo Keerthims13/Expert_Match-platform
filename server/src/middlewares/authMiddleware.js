@@ -25,6 +25,13 @@ export async function requireAuth(req, _res, next) {
 			throw error;
 		}
 
+		// Block disabled accounts immediately
+		if (String(currentUser.accountStatus || '').toLowerCase() === 'disabled') {
+			const error = new Error('Account disabled');
+			error.status = 401;
+			throw error;
+		}
+
 		req.user = {
 			id: currentUser.id,
 			fullName: currentUser.fullName,
